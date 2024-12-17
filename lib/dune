@@ -1,0 +1,8 @@
+(ocamllex (modules tiny_lexer))
+(menhir (modules tiny_parser))
+
+(library
+ (name tinyrust)
+ (inline_tests)
+ (libraries nice_parser)
+ (preprocess (pps ppx_inline_test ppx_expect ppx_deriving.show)))

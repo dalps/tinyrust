@@ -1,0 +1,4 @@
+(executable
+ (public_name tinyrust)
+ (name main)
+ (libraries tinyrust))
