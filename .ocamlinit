@@ -1,0 +1,26 @@
+open TinyrustLib
+open Ast
+open Trace
+open Types
+open Parser
+open Prettyprint
+
+#trace trace1_expr
+#trace trace1_statement;;
+
+let examples_dir = "/home/dalpi/tinyrust/test/examples/"
+let example name = examples_dir ^ name
+let examples =
+  let dirs = Sys.readdir examples_dir in
+  Array.sort String.compare dirs;
+  Array.map example dirs
+
+let p =
+  {|
+    fn main(x) {
+      let x = 3;   // variabile immutabile di tipo intero
+      let y = x+1;
+      x = x+y;     // errore: x immutabile
+      {println!("{x}");}
+    }
+  |}

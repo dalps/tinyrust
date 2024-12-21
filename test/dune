@@ -1,2 +1,5 @@
-(test
- (name test_tinyrust))
+(library
+ (inline_tests)
+ (name tinyrustTest)
+ (libraries tinyrustLib)
+ (preprocess (pps ppx_expect)))

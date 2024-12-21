@@ -14,3 +14,5 @@ Then build:
 ```sh
 dune build
 ```
+
+Only smallstep.

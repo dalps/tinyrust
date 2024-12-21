@@ -3,27 +3,33 @@
 %}
 
 %token EOF LPAR "(" RPAR ")" LBRC "{" RBRC "}"
-%token FN "fn" LET "let" EQ "=" SEP ";" COMMA "," QUOTE
+%token FN "fn" LET "let" EQ "=" SEP ";" COMMA "," MUT "mut"
+%token IF "if" ELSE "else"
 %token PLUS "+" BANG "!"
 %token <string> CONST "42"
 %token <string> STRING "abc"
 %token <string> ID "x"
 
-%start <crate> crate
+%type <expr> block_expr
+%start <statement> crate
 
 %left EQ
 %left PLUS
+%left SEP
 
 %%
 
 crate:
-  | c = list(item) EOF { c }
+  | c = item EOF { c }
 
 item:
-  | f = func { f }
+  | f = fun_decl { f }
 
-func:
-  | "fn" f = ID "(" pars = separated_list(COMMA, ID) ")" "{" s = separated_list(SEP, statement) "}" { FUNDECL (f, pars, s) }
+fun_decl:
+  | "fn" f = ID "(" pars = ID ")" s = block_expr { FUNDECL (f, pars, s) }
+
+block_expr:
+  | "{" s = statement ";" e = option(expr) "}" { BLOCK (s, e) }
 
 expr:
   | n = CONST { CONST (int_of_string n) }
@@ -31,10 +37,13 @@ expr:
   | x = ID { VAR x }
   | e1 = expr "+" e2 = expr { PLUS (e1, e2) }
   | x = ID "=" e = expr { ASSIGN (x,e) }
-  | x = ID "!" "(" args = separated_list(COMMA, expr) ")" { CALL (x,args) }
+  | x = ID "!" "(" args = expr ")" { CALL (x,args) }
+  | b = block_expr { b }
   | "(" e = expr ")" { e }
+  | "if" e0 = expr e1 = block_expr "else" e2 = block_expr { IFE(e0, e1, e2) }
 
 statement:
-  | "let" x = ID "=" e = expr { LET(x, e) }
+  | "let" x = ID "=" e = expr { LET(x, false, e) }
+  | "let" "mut" x = ID "=" e = expr { LET(x, true, e) }
   | e = expr { EXPR e }
-  | "{" ss = separated_list(SEP,statement) "}" { BLOCK (ss, None) } 
+  | s1 = statement ";" s2 = statement { SEQ (s1, s2) }

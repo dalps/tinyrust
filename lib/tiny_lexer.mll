@@ -29,6 +29,7 @@ rule next_token =
   | "}" { RBRC }
   | "fn" { FN }
   | "let" { LET }
+  | "mut" { MUT }
   | "+" { PLUS }
   | "=" { EQ }
   | "," { COMMA }

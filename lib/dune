@@ -1,8 +1,18 @@
-(ocamllex (modules tiny_lexer))
-(menhir (modules tiny_parser))
+(ocamllex
+ (modules tiny_lexer))
+
+(menhir
+ (modules tiny_parser))
 
 (library
- (name tinyrust)
+ (name tinyrustLib)
  (inline_tests)
- (libraries nice_parser)
- (preprocess (pps ppx_inline_test ppx_expect ppx_deriving.show)))
+ (libraries nice_parser re)
+ (preprocess
+  (pps ppx_inline_test ppx_expect ppx_deriving.show visitors.ppx ppx_variants_conv ppx_fields_conv)))
+
+(env
+ (dev
+  (flags (-w "-5-66"))
+ )
+)

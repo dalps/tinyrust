@@ -1,24 +1,27 @@
-type ide = string
-[@@deriving show]
+type ide = string [@@deriving show]
 
 type expr =
-| CONST of int
-| VAR of ide
-| STRING of string
-| PLUS of expr * expr
-| ASSIGN of ide * expr
-| CALL of ide * expr list
-| WITH_BANG of expr
+  | UNIT
+  | VAR of ide
+  | CONST of int
+  | STRING of string
+  | PLUS of expr * expr
+  | ASSIGN of ide * expr
+  | BLOCK of statement * expr option
+  | BLOCK_EXEC of statement * expr option
+  | BLOCK_RET of expr
+  | CALL of ide * expr
+  | WITH_BANG of expr
+  | IFE of expr * expr * expr
 [@@deriving show]
 
-type statement =
-| FUNDECL of ide * ide list * statement list
-| LET of ide * expr
-| BLOCK of statement list * expr option
-| CALL of ide * expr list
-| EXPR of expr
-| EMPTY
+and statement =
+  | FUNDECL of ide * ide * expr
+  | LET of ide * bool * expr
+  | SEQ of statement * statement
+  | EXPR of expr
+  | EMPTY
 [@@deriving show]
 
-type crate = statement list
-[@@deriving show]
+let is_value = function CONST _ | STRING _ | UNIT -> true | _ -> false
+type crate = statement [@@deriving show]

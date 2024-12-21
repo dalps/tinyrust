@@ -1,1 +1,4 @@
-let () = print_endline "Hello, World!"
+open Tinyrust
+open Main
+;;
+P.parse_string
