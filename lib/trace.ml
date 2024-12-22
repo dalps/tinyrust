@@ -1,7 +1,7 @@
 open Ast
 open Types
+open Utils
 
-let pr = Printf.printf
 let spr = Printf.sprintf
 
 module TraceResult = struct
@@ -23,11 +23,6 @@ end
 
 let rec trace1_expr : expr -> expr WithState.t =
   let open WithState in
-  let eplus e1 e2 =
-    match (e1, e2) with
-    | CONST n1, CONST n2 -> CONST (n1 + n2)
-    | _, _ -> PLUS (e1, e2)
-  in
   function
   | UNIT -> return UNIT
   | CONST n -> return (CONST n)
@@ -38,7 +33,7 @@ let rec trace1_expr : expr -> expr WithState.t =
       | V_String s -> return (STRING s)
       | V_I32 n -> return (CONST n)
       | V_Unit -> return UNIT)
-  | PLUS (e1, e2) -> eplus <$> trace1_expr e1 <*> trace1_expr e2
+  | ARITH2 (op, e1, e2) -> arith2 op <$> trace1_expr e1 <*> trace1_expr e2
   | ASSIGN (x, e) ->
       let$ e' = trace1_expr e in
       if is_value e' then
@@ -90,8 +85,7 @@ and call_fun f args : expr WithState.t =
   | Fun (pars, BLOCK (body, ret)) ->
       pushenv st (module_env st);
       List.iter2
-        (fun par arg ->
-          bind_var st par (get_value arg) |> ignore)
+        (fun par arg -> bind_var st par (get_value arg) |> ignore)
         pars args;
       return (BLOCK_EXEC (body, ret))
   | Prim prim ->
@@ -155,28 +149,3 @@ let trace_prog (n_steps : int) (p : statement list) : state * expr list =
     else return [ e ]
   in
   go 0 (CALL ("main", [])) state2
-
-open Parser
-
-let p =
-  parse_string
-    {|
-      fn foo(x, y) {
-        let z = x + y;
-        z + z
-
-      }
-
-      fn double(x) {
-        x;
-        x + x
-      }
-
-      fn main() {
-        let mut x = 3;
-        let y = foo(x,42);
-        println!("{x} bla bla {y}")
-      }
-    |}
-
-let%expect_test "" = trace_prog 30 p |> ignore

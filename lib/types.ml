@@ -1,4 +1,5 @@
 open Ast
+open Utils
 
 type ide = string [@@deriving show]
 
@@ -29,6 +30,9 @@ type envval =
 
 type memval = V_String of string | V_I32 of int | V_Unit
 [@@deriving show, variants]
+
+let string_of_memval (m : memval) =
+  match m with V_String s -> s | V_I32 i -> string_of_int i | V_Unit -> "()"
 
 let get_value = function
   | CONST n -> v_i32 n
@@ -87,8 +91,6 @@ let let_var ~(mut : bool) st x v =
   set_topenv st env';
   st
 
-let pr = Printf.printf
-
 let bind_var st x v =
   pr "Binding %s to %s\n" x (show_memval v);
   let env = topenv st in
@@ -115,9 +117,9 @@ let println (st : state) s =
     ~f:(fun groups ->
       let var = Group.get groups 1 in
       let v = get_var st var in
-      show_memval v)
+      string_of_memval v)
     re s
-  |> pr ">> %s"
+  |> print_endline
 
 module WithState = struct
   type 'a t = state -> state * 'a

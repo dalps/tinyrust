@@ -2,4 +2,4 @@
  (inline_tests)
  (name tinyrustTest)
  (libraries tinyrustLib)
- (preprocess (pps ppx_inline_test)))
+ (preprocess (pps ppx_inline_test ppx_expect)))

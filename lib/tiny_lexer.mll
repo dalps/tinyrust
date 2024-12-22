@@ -22,19 +22,34 @@ rule next_token =
   | inline_comment { next_token lexbuf }
   | "/*" { multiline_comment lexbuf }
   | newline { Lexing.new_line lexbuf; next_token lexbuf }
-
   | "(" { LPAR }
   | ")" { RPAR }
   | "{" { LBRC }
   | "}" { RBRC }
   | "String::from" { next_token lexbuf }
+  | "i32" { I32 }
+  | "->" { ARROW }
+  | "true" { TRUE }
+  | "false" { FALSE }
+  | "if" { IF }
+  | "else" { ELSE }
+  | "loop" { LOOP }
+  | "break" { BREAK }
   | "fn" { FN }
   | "let" { LET }
   | "mut" { MUT }
+  | "&" { AMPERSAND }
   | "+" { PLUS }
-  | "=" { EQ }
+  | "-" { MINUS }
+  | "*" { TIMES }
+  | "/" { DIVIDE }
+  | "%" { PERC }
+  | "==" { EQ }
+  | "=" { ASSIGN }
   | "," { COMMA }
+  | "." { DOT }
   | ";" { SEP }
+  | ":" { COLON }
   | "!" { BANG }
   | "\""string_char*"\""  { STRING (Lexing.lexeme lexbuf )}
   | num { CONST (Lexing.lexeme lexbuf) }
