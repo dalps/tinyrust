@@ -27,6 +27,7 @@ rule next_token =
   | ")" { RPAR }
   | "{" { LBRC }
   | "}" { RBRC }
+  | "String::from" { next_token lexbuf }
   | "fn" { FN }
   | "let" { LET }
   | "mut" { MUT }

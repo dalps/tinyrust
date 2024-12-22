@@ -23,7 +23,7 @@ type prim = PRINTLN [@@deriving show]
 type envval =
   | ConstVar of loc
   | MutVar of loc
-  | Fun of parameter * expr
+  | Fun of parameter list * expr
   | Prim of prim
 [@@deriving show]
 
@@ -43,6 +43,7 @@ type state = {
   envstack : env Stack.t;
   mutable memory : mem;
   mutable firstloc : loc;
+  module_env : env;
 }
 [@@deriving fields]
 
@@ -57,10 +58,10 @@ let bottom_mem : mem = fun x -> raise (UnboundLoc x)
 let bindf f x v y = if x = y then v else f y
 
 let state0 =
-  let s = Stack.create () in
+  let envstack = Stack.create () in
   let env0 = bindf bottom_env "println" (Prim PRINTLN) in
-  Stack.push env0 s;
-  { envstack = s; memory = bottom_mem; firstloc = 0 }
+  Stack.push env0 envstack;
+  { envstack; memory = bottom_mem; firstloc = 0; module_env = bottom_env }
 
 let topenv st = Stack.top st.envstack
 let popenv st = Stack.pop st.envstack |> ignore
@@ -83,9 +84,13 @@ let let_var ~(mut : bool) st x v =
   let env' = bindf env x (if mut then MutVar loc else ConstVar loc) in
   let mem' = bindf mem loc v in
   set_memory st mem';
-  set_topenv st env'
+  set_topenv st env';
+  st
+
+let pr = Printf.printf
 
 let bind_var st x v =
+  pr "Binding %s to %s\n" x (show_memval v);
   let env = topenv st in
   let mem = memory st in
   try
@@ -96,7 +101,8 @@ let bind_var st x v =
         st
     | Fun _ | Prim _ -> failwith "Cannot assign to a function"
   with UnboundVar x ->
-    let_var st x v;
+    pr "Allocating %s\n" x;
+    let st = let_var ~mut:false st x v in
     st
 
 let println (st : state) s =
@@ -105,13 +111,13 @@ let println (st : state) s =
     compile
     @@ seq [ char '{'; group (rep1 @@ compl [ char '{'; char '}' ]); char '}' ]
   in
-  let matches = all re s in
-  List.iter
-    (fun groups ->
+  replace ~all:true
+    ~f:(fun groups ->
       let var = Group.get groups 1 in
       let v = get_var st var in
-      Printf.printf "%s: %s\n" var (show_memval v))
-    matches
+      show_memval v)
+    re s
+  |> pr ">> %s"
 
 module WithState = struct
   type 'a t = state -> state * 'a

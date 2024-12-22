@@ -10,13 +10,13 @@ type expr =
   | BLOCK of statement * expr option
   | BLOCK_EXEC of statement * expr option
   | BLOCK_RET of expr
-  | CALL of ide * expr
+  | CALL of ide * expr list
   | WITH_BANG of expr
   | IFE of expr * expr * expr
 [@@deriving show]
 
 and statement =
-  | FUNDECL of ide * ide * expr
+  | FUNDECL of ide * ide list * expr
   | LET of ide * bool * expr
   | SEQ of statement * statement
   | EXPR of expr
@@ -24,4 +24,5 @@ and statement =
 [@@deriving show]
 
 let is_value = function CONST _ | STRING _ | UNIT -> true | _ -> false
-type crate = statement [@@deriving show]
+
+type crate = statement list [@@deriving show]

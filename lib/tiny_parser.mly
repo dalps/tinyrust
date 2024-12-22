@@ -11,7 +11,7 @@
 %token <string> ID "x"
 
 %type <expr> block_expr
-%start <statement> crate
+%start <crate> crate
 
 %left EQ
 %left PLUS
@@ -20,13 +20,13 @@
 %%
 
 crate:
-  | c = item EOF { c }
+  | c = list(item) EOF { c }
 
 item:
   | f = fun_decl { f }
 
 fun_decl:
-  | "fn" f = ID "(" pars = ID ")" s = block_expr { FUNDECL (f, pars, s) }
+  | "fn" f = ID "(" pars = separated_list(COMMA, ID) ")" s = block_expr { FUNDECL (f, pars, s) }
 
 block_expr:
   | "{" s = statement ";" e = option(expr) "}" { BLOCK (s, e) }
@@ -37,7 +37,7 @@ expr:
   | x = ID { VAR x }
   | e1 = expr "+" e2 = expr { PLUS (e1, e2) }
   | x = ID "=" e = expr { ASSIGN (x,e) }
-  | x = ID "!" "(" args = expr ")" { CALL (x,args) }
+  | x = ID option("!") "(" args = separated_list(COMMA, expr) ")" { CALL (x,args) }
   | b = block_expr { b }
   | "(" e = expr ")" { e }
   | "if" e0 = expr e1 = block_expr "else" e2 = block_expr { IFE(e0, e1, e2) }
@@ -46,4 +46,5 @@ statement:
   | "let" x = ID "=" e = expr { LET(x, false, e) }
   | "let" "mut" x = ID "=" e = expr { LET(x, true, e) }
   | e = expr { EXPR e }
+  | i = item { i }
   | s1 = statement ";" s2 = statement { SEQ (s1, s2) }

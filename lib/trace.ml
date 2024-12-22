@@ -70,23 +70,34 @@ let rec trace1_expr : expr -> expr WithState.t =
         popenv st;
         return e')
       else return (BLOCK_RET e')
-  | CALL (f, arg) ->
-      let$ arg' = trace1_expr arg in
-      if is_value arg' then
-        let$ st = get in
-        let env = topenv st in
-        match env f with
-        | Fun (pars, BLOCK (body, ret)) ->
-            newenv st;
-            let st' = bind_var st pars (get_value arg') in
-            let$ _ = set st' in
-            return (BLOCK_EXEC (body, ret))
-        | Prim prim ->
-            (match arg with STRING s -> println st s | _ -> ());
-            return UNIT
-        | _ -> type_fail @@ spr "Cannot call a non-function %s" f
-      else return (CALL (f, arg'))
+  | CALL (f, args) -> trace1_args f [] args
   | _ -> failwith "todo"
+
+and trace1_args f vals args : expr WithState.t =
+  let open WithState in
+  match args with
+  | [] -> call_fun f vals
+  | v :: args when is_value v -> trace1_args f (v :: vals) args
+  | arg :: args ->
+      let$ arg' = trace1_expr arg in
+      return (CALL (f, arg' :: args))
+
+and call_fun f args : expr WithState.t =
+  let open WithState in
+  let$ st = get in
+  let env = topenv st in
+  match env f with
+  | Fun (pars, BLOCK (body, ret)) ->
+      pushenv st (module_env st);
+      List.iter2
+        (fun par arg ->
+          bind_var st par (get_value arg) |> ignore)
+        pars args;
+      return (BLOCK_EXEC (body, ret))
+  | Prim prim ->
+      (match args with [ STRING s ] -> println st s | _ -> ());
+      return UNIT
+  | _ -> type_fail @@ spr "Cannot call a non-function %s" f
 
 and trace1_statement (t : statement Termination.t) :
     statement Termination.t WithState.t =
@@ -99,11 +110,11 @@ and trace1_statement (t : statement Termination.t) :
       match t with
       | EMPTY -> return stop
       | LET (x, mut, e) ->
-          let$ v = trace1_expr e in
-          if is_value v then (
-            let_var st x (get_value v) ~mut;
+          let$ e' = trace1_expr e in
+          if is_value e' then (
+            let_var st x (get_value e') ~mut;
             return stop)
-          else return (continue (LET (x, mut, e)))
+          else return (continue (LET (x, mut, e')))
       | FUNDECL (x, pars, body) ->
           let env = topenv st in
           let env' = bindf env x (Fun (pars, body)) in
@@ -118,7 +129,7 @@ and trace1_statement (t : statement Termination.t) :
           | Stop -> return (continue s2)
           | Continue s1' -> return (continue @@ SEQ (s1', s2))))
 
-let trace_item (p : statement) : state =
+let trace_item state0 (p : statement) : state =
   let open WithState in
   let open Termination in
   let rec go (s : statement Termination.t) : statement Termination.t WithState.t
@@ -129,30 +140,43 @@ let trace_item (p : statement) : state =
   let st, _ = go (continue p) state0 in
   st
 
-let trace_prog (n_steps : int) (p : statement) : state * expr list =
+let trace_prog (n_steps : int) (p : statement list) : state * expr list =
   let open WithState in
   let open Termination in
-  let state1 = trace_item p in
-  let rec go (e : expr) : expr list WithState.t =
-    let$ e' = trace1_expr e in
-    if is_value e' then return [ e' ]
-    else
-      let$ rest = go e' in
-      return (e :: rest)
+  let state1 = List.fold_left trace_item state0 p in
+  let state2 = { state1 with module_env = topenv state1 } in
+  let rec go i (e : expr) : expr list WithState.t =
+    if i < n_steps then
+      let$ e' = trace1_expr e in
+      if is_value e' then return [ e' ]
+      else
+        let$ rest = go (i + 1) e' in
+        return (e :: rest)
+    else return [ e ]
   in
-  go (CALL ("main", UNIT)) state1
+  go 0 (CALL ("main", [])) state2
 
 open Parser
 
 let p =
   parse_string
     {|
-  fn main(x) {
-    let mut x = 3;   // variabile immutabile di tipo intero
-    let y = x+1;
-    x = x+y;     // errore: x immutabile
-    {println!("{x} bla bla {y}");}
-  }
-|}
+      fn foo(x, y) {
+        let z = x + y;
+        z + z
+
+      }
+
+      fn double(x) {
+        x;
+        x + x
+      }
+
+      fn main() {
+        let mut x = 3;
+        let y = foo(x,42);
+        println!("{x} bla bla {y}")
+      }
+    |}
 
 let%expect_test "" = trace_prog 30 p |> ignore

@@ -15,7 +15,7 @@ let examples =
   Array.sort String.compare dirs;
   Array.map example dirs
 
-let p =
+let sample =
   {|
     fn main(x) {
       let x = 3;   // variabile immutabile di tipo intero

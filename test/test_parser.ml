@@ -1,41 +1,38 @@
 open TinyrustLib
-open Parser
 
-let _ = P.pp_exceptions ()
+(**
+  The absolute path of the examples directory in your file system.
 
-let pr = Printf.printf
-
-let%test_unit "" =
-  parse_string
-    {|
-      fn main(x) {
-        let x = 3;   // variabile immutabile di tipo intero
-        let y = x+1;
-        x = x+y;     // errore: x immutabile
-        {println!("{x}");}
-      }
-    |}
-  |> ignore
-
+  To get this path, [cd] into the examples directory and run [pwd].
+*)
 let examples_dir = "/home/dalpi/tinyrust/test/examples/"
-let example name = examples_dir ^ name
+
+let abs_path name = examples_dir ^ name
+
 let examples =
   let dirs = Sys.readdir examples_dir in
   Array.sort String.compare dirs;
   dirs
 
-(* let%expect_test "" =
-  let e = parse_file (example examples.(0)) in
-  pr "%s" (show_statement e) *)
+let pr = Printf.printf
 
+(** ------------------------------------------
+    Start of parser tests
+    ------------------------------------------ *)
 
-(* let%test_unit "test_parse" =
-  Array.iter (fun name -> parse_file (example name) |> ignore) examples *)
+let read_file filename =
+  let ch = open_in filename in
+  let str = really_input_string ch (in_channel_length ch) in
+  close_in ch;
+  str
 
-(* let%test_unit "test_parse_1" =
-  parse_file (example examples.(0)) |> ignore *)
-
-(* let%test_unit "test_parse_2" =
-  parse_file (example examples.(1)) |> ignore
-let%test_unit "test_parse_3" =
-  parse_file (example examples.(2)) |> ignore *)
+let%test_unit "test_parser" =
+  Array.iteri
+    (fun _ ex ->
+      let p = read_file (abs_path ex) in
+      try
+        Parser.parse_string p |> ignore;
+        pr "✔ %s\n" ex
+      with _ ->
+        pr "✘ Couldn't parse %s\n" ex)
+    examples
