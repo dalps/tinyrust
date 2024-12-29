@@ -2,12 +2,40 @@
   open Ast
 %}
 
-%token EOF LPAR "(" RPAR ")" LBRC "{" RBRC "}"
-%token FN "fn" LET "let" MUT "mut"
-%token IF "if" ELSE "else" LOOP "loop" BREAK "break" TRUE "true" FALSE "false"
-%token I32 "i32"
-%token SEP ";" COMMA "," COLON ":" ASSIGN "=" DOT "." ARROW "->"
-%token PLUS "+" MINUS "-" TIMES "*" DIVIDE "/" BANG "!" EQ "==" LEQ "<=" AMPERSAND "&" PERC "%"
+%token
+  EOF
+  LPAR          "("
+  RPAR          ")"
+  LBRC          "{"
+  RBRC          "}"
+  FN            "fn"
+  LET           "let"
+  MUT           "mut"
+  IF            "if"
+  ELSE          "else"
+  LOOP          "loop"
+  BREAK         "break"
+  TRUE          "true"
+  FALSE         "false"
+  TY_I32        "i32"
+  TY_STRING     "String"
+  TY_STR        "str"
+  SEP           ";"
+  COMMA         ","
+  COLON         ":"
+  ASSIGN        "="
+  DOT           "."
+  ARROW         "->"
+  PLUS          "+"
+  MINUS         "-"
+  TIMES         "*"
+  DIVIDE        "/"
+  BANG          "!"
+  EQ            "=="
+  LEQ           "<="
+  AMPERSAND     "&"
+  PERC          "%"
+
 %token <string> CONST
 %token <string> STRING
 %token <string> ID
@@ -15,9 +43,11 @@
 %type <expr> block_expr
 %start <crate> crate
 
-%left EQ LEQ
-%left PLUS MINUS
-%left TIMES DIVIDE
+%left "==" "<="
+%left "+" "-"
+%left "*" "/" "%"
+%right "="
+%nonassoc "&"
 
 %left SEP
 
@@ -32,8 +62,14 @@ item:
 fun_decl:
   | "fn" f = ID "(" pars = separated_list(COMMA, fun_parameter) ")" option(fun_return_type) s = block_expr { FUNDECL (f, pars, s) }
 
-fun_type:
+typ:
   | "i32" {  }
+  | "String" {  }
+  | "str" {  }
+
+fun_type:
+  | t = typ { t }
+  | "&" t = typ { t }
 
 fun_return_type:
   | "->" fun_type {  }
@@ -43,6 +79,7 @@ fun_parameter:
 
 block_expr:
   | "{" s = statement ";" e = option(expr) "}" { BLOCK (s, e) }
+  | "{" e = expr "}" { BLOCK (EMPTY, Some e) }
 
 expr:
   | "true" { TRUE }
@@ -59,19 +96,19 @@ expr:
   | "(" e = expr ")" { e }
   | "if" e0 = expr e1 = block_expr "else" e2 = block_expr { IFE(e0, e1, e2) }
   | "loop" e = block_expr { LOOP e }
+  | "&" m = boption("mut") e = expr { REF (m, e) }
 
 statement:
-  | "let" x = ID "=" e = expr { LET(x, false, e) }
-  | "let" "mut" x = ID "=" e = expr { LET(x, true, e) }
+  | "let" m = boption("mut") x = ID "=" e = expr { LET(x, m, e) }
   | e = expr { EXPR e }
   | i = item { i }
   | s1 = statement ";" s2 = statement { SEQ (s1, s2) }
 
 %inline binop:
-| "+" { ADD }
-| "-" { SUB }
-| "*" { MUL }
-| "/" { DIV }
-| "%" { MOD }
-| "==" { EQ }
-| "<=" { LEQ }
+  | "+" { ADD }
+  | "-" { SUB }
+  | "*" { MUL }
+  | "/" { DIV }
+  | "%" { MOD }
+  | "==" { EQ }
+  | "<=" { LEQ }

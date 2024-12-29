@@ -34,6 +34,9 @@ type memval = V_String of string | V_I32 of int | V_Unit
 let string_of_memval (m : memval) =
   match m with V_String s -> s | V_I32 i -> string_of_int i | V_Unit -> "()"
 
+let expr_of_memval (m : memval) : expr =
+  match m with V_String s -> STRING s | V_I32 i -> CONST i | V_Unit -> UNIT
+
 let get_value = function
   | CONST n -> v_i32 n
   | STRING s -> v_string s

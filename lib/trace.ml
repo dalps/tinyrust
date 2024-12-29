@@ -27,12 +27,9 @@ let rec trace1_expr : expr -> expr WithState.t =
   | UNIT -> return UNIT
   | CONST n -> return (CONST n)
   | STRING s -> return (STRING s)
-  | VAR x -> (
+  | VAR x ->
       let$ st = get in
-      match get_var st x with
-      | V_String s -> return (STRING s)
-      | V_I32 n -> return (CONST n)
-      | V_Unit -> return UNIT)
+      get_var st x |> expr_of_memval |> return
   | ARITH2 (op, e1, e2) -> arith2 op <$> trace1_expr e1 <*> trace1_expr e2
   | ASSIGN (x, e) ->
       let$ e' = trace1_expr e in
@@ -45,7 +42,7 @@ let rec trace1_expr : expr -> expr WithState.t =
       else return (ASSIGN (x, e'))
   | BLOCK (s, e) ->
       let$ st = get in
-      Stack.push (topenv st) (envstack st);
+      pushenv st (topenv st);
       return (BLOCK_EXEC (s, e))
   | BLOCK_EXEC (s, e) -> (
       let$ s' = trace1_statement (Continue s) in
@@ -105,9 +102,9 @@ and trace1_statement (t : statement Termination.t) :
       | EMPTY -> return stop
       | LET (x, mut, e) ->
           let$ e' = trace1_expr e in
-          if is_value e' then (
-            let_var st x (get_value e') ~mut;
-            return stop)
+          if is_value e' then
+            let _ = set @@ let_var st x (get_value e') ~mut in
+            return stop
           else return (continue (LET (x, mut, e')))
       | FUNDECL (x, pars, body) ->
           let env = topenv st in

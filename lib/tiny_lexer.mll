@@ -27,7 +27,6 @@ rule next_token =
   | "{" { LBRC }
   | "}" { RBRC }
   | "String::from" { next_token lexbuf }
-  | "i32" { I32 }
   | "->" { ARROW }
   | "true" { TRUE }
   | "false" { FALSE }
@@ -38,6 +37,9 @@ rule next_token =
   | "fn" { FN }
   | "let" { LET }
   | "mut" { MUT }
+  | "i32" { TY_I32 }
+  | "String" { TY_STRING }
+  | "str" { TY_STR }
   | "&" { AMPERSAND }
   | "+" { PLUS }
   | "-" { MINUS }

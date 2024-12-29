@@ -17,6 +17,7 @@ type expr =
   | CALL of ide * expr list
   | IFE of expr * expr * expr
   | LOOP of expr
+  | REF of bool * expr (* (mutable?, expr) *)
   | BREAK
   | BORROW of expr
 [@@deriving show]
