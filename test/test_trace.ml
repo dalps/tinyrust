@@ -2,7 +2,6 @@ open TinyrustLib
 open Trace
 open Parser
 open Common
-open Ast
 
 let helper n s = s |> parse_string |> trace_prog n |> ignore
 
@@ -20,25 +19,43 @@ let%expect_test "test_trace_2" =
   |}
   |> helper 30
 
-let%expect_test "test_trace_1" =
-  {|
-    fn main() {
-        let x = 3; // variabile immutabile di tipo intero
-        let y = x + 1; // idem
-        println!("{x}"); // output: 3
-        println!("{y}") // output: 4
-    }
-  |}
-  |> helper 25
-  [@expect {|
-    3
-    4
-    |}]
+let tests =
+  (* gas, outcome *)
+  [
+    (25, Ok "3\n4\n");
+    (25, Error "cannot mutate immutable variable x");
+    (25, Ok "7\n");
+    (25, Error "cannot mutate immutable variable x");
+    (25, Ok "Ciao, mondo\n");
+    (25, Ok "6\n3\n");
+    (25, Error "y not found in this scope");
+    (25, Ok "7\n");
+    (25, Error "borrow of x");
+    (25, Error "borrow of x");
+    (25, Ok "Ciao\nCiao\n");
+    (25, Ok {|
+      il parametro prestato: Ciao
+      il parametro x: Ciao
+    |});
+    (25, Error "cannot mutate immutable variable x");
+    (25, Ok {|
+      Ciao, mondo
+      Ciao, mondo
+    |});
+    (25, Error "cannot borrow x as immutable");
+    (25, Ok "1\n2\n3\n4\n5\n...");
+    (40, Ok "3\n2\n1\n0");
+    (50, Ok {|
+      0,0
+      0,1
+      1,0
+      1,1
+    |});
+    (25, Ok "7");
+    (25, Error "interna not found in this scope");
+    (25, Error "y not found in this scope");
+  ]
 
-let _a = show_binop
-let _b = programs.(0)
-
-(*
 let%expect_test "" =
   {|
     fn foo(x: i32, y: i32) -> i32 {
@@ -60,4 +77,4 @@ let%expect_test "" =
       println!("{x} bla bla {y}")
     }
   |}
-  |> helper 30 *)
+  |> helper 30
