@@ -13,19 +13,32 @@ type loc = Stack of int | Heap of int [@@deriving show]
 
 type trace_error =
   | TypeError of string
-  | MutabilityError of ide * string
+  | CannotMutate of ide
+  | MutBorrowOfNonMut of ide
+  | DataRace of ide * bool * bool
   | UnboundVar of ide
-  | OutOfGas
+  | OutOfGas of int
   | NotInLoop
+  | MovedValue of ide
   | TODO
 [@@deriving show]
 
 let string_of_trace_error = function
   | TypeError s -> spr "[TypeError] %s" s
-  | MutabilityError (x, _) -> spr "[Mutability] cannot mutate %s" x
-  | UnboundVar x -> spr "[UnboundVar] %s" x
-  | OutOfGas -> "[OutOfGas]"
-  | NotInLoop -> "[NotInLoop]"
+  | CannotMutate x -> spr "[CannotMutate] cannot mutate immutable variable %s" x
+  | UnboundVar x -> spr "[UnboundVar] %s not defined in this scope" x
+  | MovedValue x -> spr "[MovedValue] borrow of moved value %s" x
+  | OutOfGas i -> spr "[OutOfGas] trace run out of gas (%d)" i
+  | NotInLoop -> "[NotInLoop] tried to break outside of a loop"
+  | MutBorrowOfNonMut x ->
+      spr
+        "[MutBorrowOfNonMut] cannot borrow %s as mutable, as it is not \
+         declared as mutable"
+        x
+  | DataRace (x, mut1, mut2) ->
+      let format_mut m = if m then "mutable" else "immutable" in
+      spr "[DataRace] cannot borrow %s as %s because it is also borrowed as %s"
+        x (format_mut mut1) (format_mut mut2)
   | TODO -> "[TODO]"
 
 type 'a trace_result = ('a, trace_error) result
@@ -87,7 +100,12 @@ type env = Env.t
 type mem = string Heap.t
 
 module St = struct
-  type t = { envstack : env Stack.t; mutable loop_level : int; toplevel : env }
+  type t = {
+    envstack : env Stack.t;
+    mutable loop_level : int;
+    toplevel : env;
+    mutable output : string;
+  }
   [@@deriving fields]
 
   let prelude = Env.bind Env.bottom "println" (Prim PRINTLN)
@@ -95,7 +113,7 @@ module St = struct
   let init () =
     let envstack = Stack.create () in
     Stack.push prelude envstack;
-    { envstack; loop_level = 0; toplevel = prelude }
+    { envstack; loop_level = 0; toplevel = prelude; output = "" }
 
   let topenv st = Stack.top st.envstack
   let popenv st = Stack.pop st.envstack |> ignore
@@ -104,6 +122,8 @@ module St = struct
   let set_topenv st env =
     ignore (Stack.pop_opt st.envstack);
     Stack.push env st.envstack
+
+  let append_output st s = st.output <- st.output ^ s
 
   let enter_loop st = st.loop_level <- st.loop_level + 1
   let exit_loop st =
@@ -132,18 +152,17 @@ module St = struct
     let env = topenv st in
     let* res = Env.get env x in
     match res with
-    | Var { mut = false; _ } ->
-        error (TypeError (spr "Cannot assign to immutable variable %s" x))
-    | Var { mut; value = old_value } ->
-        let env' = Env.bind env x (Var { mut; value = v }) in
+    | Var { mut = false; _ } -> error (CannotMutate x)
+    | Var ({ mut; value = old_value } as data) ->
+        let env' = Env.bind env x (Var { data with value = v }) in
         ok (set_topenv st env')
-    | _ -> error (TypeError "Cannot assign to a function")
+    | _ -> error (TypeError (spr "cannot assign to the function %s" x))
 end
 
 type state = St.t
 
 module Prim = struct
-  let println (st : state) s : string trace_result =
+  let println (st : state) s : unit trace_result =
     let open R in
     let open Re in
     let re =
@@ -151,18 +170,22 @@ module Prim = struct
       @@ seq
            [ char '{'; group (rep1 @@ compl [ char '{'; char '}' ]); char '}' ]
     in
-    split_full re s
-    |> List.fold_left
-         (fun acc tok ->
-           let* acc = acc in
-           let* next =
-             match tok with
-             | `Text s -> ok s
-             | `Delim groups ->
-                 let var = Group.get groups 1 in
-                 let* v = St.get_var st var in
-                 ok (string_of_stackval v)
-           in
-           ok (acc ^ next))
-         (ok "")
+    let* line =
+      split_full re s
+      |> List.fold_left
+           (fun acc tok ->
+             let* acc = acc in
+             let* next =
+               match tok with
+               | `Text s -> ok s
+               | `Delim groups ->
+                   let var = Group.get groups 1 in
+                   let* v = St.get_var st var in
+                   ok (string_of_stackval v)
+             in
+             ok (acc ^ next))
+           (ok "")
+    in
+    St.append_output st (line ^ "\n");
+    ok ()
 end

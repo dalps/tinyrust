@@ -72,9 +72,9 @@ let rec trace1_expr (st : state) (e : expr) : expr trace_result =
   | LOOP (BLOCK (s, e), _) ->
       St.newenv st;
       St.enter_loop st;
-      return (loop (BLOCK_EXEC (s, e)) (BLOCK_EXEC (s, e)))
+      return (loop (LOOP_EXEC (s, e)) (LOOP_EXEC (s, e)))
   | LOOP (original, e) ->
-      let& v = (loop original, trace1_expr st e) in
+      let& _ = (loop original, trace1_expr st e) in
       return (loop original original)
   | BREAK ->
       let* _ = St.exit_loop st in
@@ -110,8 +110,7 @@ and call_fun (st : state) (f : ide) (args : expr list) : expr trace_result =
   | Prim prim -> (
       match args with
       | [ STRING s ] ->
-          let* s = Prim.println st s in
-          print_endline s;
+          let* _ = Prim.println st s in
           ok UNIT
       | _ -> ok UNIT)
   | _ -> error (TypeError (spr "Cannot call a non-function %s" f))
@@ -144,7 +143,7 @@ let read_toplevel (st : state) (s : statement) : unit =
   | _ -> failwith "Not a toplevel item"
 
 let trace_prog (n_steps : int) (prog : statement list) :
-    expr list * expr trace_result =
+    state * expr list * expr trace_result =
   let open R in
   let st = St.init () in
   List.iter (read_toplevel st) prog;
@@ -154,8 +153,8 @@ let trace_prog (n_steps : int) (prog : statement list) :
       match trace1_expr st e with
       | Ok e' -> if is_value e' then (acc, ok e') else go (i + 1) (e :: acc) e'
       | err -> (acc, err)
-    else (acc, error OutOfGas)
+    else (acc, error (OutOfGas n_steps))
   in
   let entry = CALL ("main", []) in
   let lst, res = go 0 [ entry ] entry in
-  (List.rev lst, res)
+  (st, List.rev lst, res)

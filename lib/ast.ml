@@ -16,7 +16,8 @@ type expr =
   | BLOCK_RET of expr
   | CALL of ide * expr list
   | IFE of expr * expr * expr
-  | LOOP of expr * expr
+  | LOOP of expr
+  | LOOP_EXEC of expr * expr
   | REF of bool * expr (* (mutable?, expr) *)
   | BREAK
   | BORROW of expr
