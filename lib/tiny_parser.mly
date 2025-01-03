@@ -43,10 +43,10 @@
 %type <expr> block_expr
 %start <crate> crate
 
+%right "="
 %left "==" "<="
 %left "+" "-"
 %left "*" "/" "%"
-%right "="
 %nonassoc "&"
 
 %left SEP
@@ -95,7 +95,7 @@ expr:
   | b = block_expr { b }
   | "(" e = expr ")" { e }
   | "if" e0 = expr e1 = block_expr "else" e2 = block_expr { IFE(e0, e1, e2) }
-  | "loop" e = block_expr { LOOP e }
+  | "loop" e = block_expr { LOOP (e, e) }
   | "&" m = boption("mut") e = expr { REF (m, e) }
 
 statement:

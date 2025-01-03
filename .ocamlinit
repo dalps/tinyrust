@@ -4,16 +4,11 @@ open Trace
 open Types
 open Parser
 open Prettyprint
+open TinyrustTest
+open Common
 
 #trace trace1_expr
 #trace trace1_statement;;
-
-let examples_dir = "/home/dalpi/tinyrust/test/examples/"
-let example name = examples_dir ^ name
-let examples =
-  let dirs = Sys.readdir examples_dir in
-  Array.sort String.compare dirs;
-  Array.map example dirs
 
 let sample =
   {|

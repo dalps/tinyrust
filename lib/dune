@@ -13,6 +13,6 @@
 
 (env
  (dev
-  (flags (-w "-5-66"))
+  (flags (-w ""))
  )
 )

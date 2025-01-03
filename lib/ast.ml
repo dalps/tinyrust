@@ -16,7 +16,7 @@ type expr =
   | BLOCK_RET of expr
   | CALL of ide * expr list
   | IFE of expr * expr * expr
-  | LOOP of expr
+  | LOOP of expr * expr
   | REF of bool * expr (* (mutable?, expr) *)
   | BREAK
   | BORROW of expr
@@ -29,6 +29,16 @@ and statement =
   | EXPR of expr
   | EMPTY
 [@@deriving show]
+
+let assign x e = ASSIGN (x, e)
+let block_exec s e = BLOCK_EXEC (s, e)
+let block_ret e = BLOCK_RET e
+let ife e0 e1 e2 = IFE (e0, e1, e2)
+let loop original e = LOOP (original, e)
+
+let seq s1 s2 = SEQ (s1, s2)
+let expr e = EXPR e
+let let_stmt x mut e = LET (x, mut, e)
 
 let apply_binop op n1 n2 : expr =
   match (op : binop) with
