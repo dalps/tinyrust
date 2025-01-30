@@ -3,7 +3,8 @@ open Types
 open State
 open Utils
 
-type conf = Stop | Continue of statement [@@deriving variants]
+type conf = LoopContinue | Break | Stop | Continue of statement
+[@@deriving variants]
 
 let expr_of_stackval : stackval -> expr = function
   | I32 i -> CONST i
@@ -28,12 +29,15 @@ let ( let& ) ((constr, e) : (expr -> 'term) * expr trace_result)
   if is_value e then action e else return (constr e)
 
 let ( let$ ) ((constr, s) : (statement -> 'term) * conf trace_result)
-    (action : unit -> 'term trace_result) : 'term trace_result =
+    (action : [ `Nothing | `Break | `LoopContinue ] -> 'term trace_result) :
+    'term trace_result =
   let open R in
   let* s = s in
   match s with
   | Continue s -> return (constr s)
-  | Stop -> action ()
+  | Stop -> action `Nothing
+  | Break -> action `Break
+  | LoopContinue -> action `LoopContinue
 
 let rec trace1_expr (st : state) (e : expr) : expr trace_result =
   let open R in
@@ -49,7 +53,7 @@ let rec trace1_expr (st : state) (e : expr) : expr trace_result =
       let* _ = St.bind_var st x v in
       return UNIT
   | BLOCK (s, e) ->
-      St.pushenv st (St.topenv st);
+      St.newenv st;
       return (BLOCK_EXEC (s, e))
   | BLOCK_EXEC (s, e) -> (
       let$ _ = ((fun s' -> block_exec s' e), trace1_statement st s) in
@@ -69,17 +73,24 @@ let rec trace1_expr (st : state) (e : expr) : expr trace_result =
       | TRUE -> return e1
       | FALSE -> return e2
       | _ -> error (TypeError "if guard not bool"))
-  | LOOP (BLOCK (s, e), _) ->
+  | LOOP (BLOCK (s, e)) ->
+      let s =
+        match e with
+        | Some e -> seq s (expr e)
+        | None -> s
+      in
       St.newenv st;
       St.enter_loop st;
-      return (loop (LOOP_EXEC (s, e)) (LOOP_EXEC (s, e)))
-  | LOOP (original, e) ->
-      let& _ = (loop original, trace1_expr st e) in
-      return (loop original original)
-  | BREAK ->
-      let* _ = St.exit_loop st in
-      St.popenv st;
-      return UNIT
+      return (loop_exec s s)
+  | LOOP_EXEC (original, s) -> (
+      let$ b = (loop_exec original, trace1_statement st s) in
+      match b with
+      | `Break ->
+          let* _ = St.exit_loop st in
+          St.popenv st;
+          return UNIT
+      | _ -> return (loop_exec original original))
+  | BREAK -> return BREAK
   | _ -> error TODO
 
 and trace1_args (st : state) (f : ide) (vals : expr list) (args : expr list) :
@@ -128,9 +139,11 @@ and trace1_statement (st : state) (t : statement) : conf trace_result =
       let env' = Env.bind (St.topenv st) x (Fun (pars, body)) in
       St.set_topenv st env';
       return stop
-  | EXPR e ->
+  | EXPR e -> (
       let& v = (continue % expr, trace1_expr st e) in
-      return stop
+      match v with
+      | BREAK -> return Break
+      | _ -> return stop)
   | SEQ (s1, s2) ->
       let$ _ = ((continue % fun s1' -> seq s1' s2), trace1_statement st s1) in
       return (continue s2)
@@ -156,5 +169,5 @@ let trace_prog (n_steps : int) (prog : statement list) :
     else (acc, error (OutOfGas n_steps))
   in
   let entry = CALL ("main", []) in
-  let lst, res = go 0 [ entry ] entry in
+  let lst, res = go 0 [] entry in
   (st, List.rev lst, res)

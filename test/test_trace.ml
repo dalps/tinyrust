@@ -42,13 +42,13 @@ let tests : (string * int * string trace_result) array =
     ("15-borrowError.rs", 25, Error (DataRace ("x", true, false)));
     ("16-borrowMut.rs", 25, Ok "Ciao, mondo\nCiao, mondo\n");
     ("17-borrowMutError.rs", 40, Error (MutBorrowOfNonMut "x"));
-    ("18-loop.rs", 50, Ok "1\n2\n3\n4\n5\n...\n");
+    ("18-loop.rs", 50, Error (OutOfGas 50));
     ("19-loopBreak.rs", 50, Ok "3\n2\n1\n0\n");
     ("20-loopNested.rs", 50, Ok "0,0\n0,1\n1,0\n1,1\n");
     ("21-exprBlock.rs", 25, Ok "7");
     ("22-funExpr.rs", 25, Error (UnboundVar "interna"));
     ("23-scopeCheck.rs", 25, Error (UnboundVar "y"));
-  |]
+  |] [@@ocamlformat "disable"]
 
 let%expect_test "test_trace" =
   Array.iter2
@@ -76,7 +76,8 @@ let%expect_test "test_trace" =
         (fun (title, kind, output) -> pr "%-9s %-9s\n%s\n\n" title kind output)
         [
           ("Output:", res_kind, res_output); ("Expected:", exp_kind, exp_output);
-        ])
+        ];
+      pr "%s\n" (St.to_string st))
     examples_dict tests
 
 let%expect_test "" =

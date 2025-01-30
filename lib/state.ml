@@ -68,12 +68,22 @@ let string_of_stackval = function
   | String s -> s
   | Ref (_, i) -> spr "ref: %d" i
 
-module Env = struct
-  module StringMap = Map.Make (String)
+let string_of_envval = function
+  | Var { mut; value } ->
+      spr "%s %s" (if mut then "mut" else "") (string_of_stackval value)
+  | Fun _ -> "<fun>"
+  | Prim _ -> "<prim>"
 
+module StringMap = Map.Make (String)
+module Env = struct
   include StringMap
 
   type t = envval StringMap.t
+
+  let string_of_env env =
+    StringMap.fold
+      (fun x v acc -> spr "{%s:%s} %s" x (string_of_envval v) acc)
+      env ""
 
   let bottom = StringMap.empty
 
@@ -116,9 +126,9 @@ module St = struct
     { envstack; loop_level = 0; toplevel = prelude; output = "" }
 
   let topenv st = Stack.top st.envstack
-  let popenv st = Stack.pop st.envstack |> ignore
+  let popenv st = Stack.drop st.envstack
   let pushenv st env = Stack.push env st.envstack
-  let newenv st = Stack.push (topenv st) st.envstack
+  let newenv st = Stack.push prelude st.envstack
   let set_topenv st env =
     ignore (Stack.pop_opt st.envstack);
     Stack.push env st.envstack
@@ -133,13 +143,25 @@ module St = struct
       ok ())
     else error NotInLoop
 
+  let string_of_envstack st =
+    Stack.fold (fun acc env -> acc ^ Env.string_of_env env) "" st.envstack
+
+  let to_string st =
+    spr "<%s>" (string_of_envstack st)
+
   let get_var st x : stackval trace_result =
     let open R in
-    let env = topenv st in
-    let* res = Env.get env x in
-    match res with
-    | Var { mut; value } -> ok value
-    | _ -> error (TypeError "cannot use a function here")
+    Stack.fold
+      (fun acc env ->
+        (let* v = Env.get env x in
+         match v with
+         | Var { mut; value } -> ok value
+         | _ ->
+             error
+               (TypeError
+                  (spr "%s is bound to a function, but I expected a value" x)))
+        <|> acc)
+      (Error (UnboundVar x)) st.envstack
 
   let let_var ~(mut : bool) st x v : unit trace_result =
     let open R in

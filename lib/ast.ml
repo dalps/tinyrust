@@ -17,7 +17,7 @@ type expr =
   | CALL of ide * expr list
   | IFE of expr * expr * expr
   | LOOP of expr
-  | LOOP_EXEC of expr * expr
+  | LOOP_EXEC of statement * statement
   | REF of bool * expr (* (mutable?, expr) *)
   | BREAK
   | BORROW of expr
@@ -35,7 +35,7 @@ let assign x e = ASSIGN (x, e)
 let block_exec s e = BLOCK_EXEC (s, e)
 let block_ret e = BLOCK_RET e
 let ife e0 e1 e2 = IFE (e0, e1, e2)
-let loop original e = LOOP (original, e)
+let loop_exec original e = LOOP_EXEC (original, e)
 
 let seq s1 s2 = SEQ (s1, s2)
 let expr e = EXPR e
