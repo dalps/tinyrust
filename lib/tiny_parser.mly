@@ -60,7 +60,7 @@ item:
   | f = fun_decl { f }
 
 fun_decl:
-  | "fn" f = ID "(" pars = separated_list(COMMA, fun_parameter) ")" option(fun_return_type) s = block_expr { FUNDECL (f, pars, s) }
+  | "fn" name = ID "(" pars = separated_list(COMMA, fun_parameter) ")" option(fun_return_type) body = block_expr { FUNDECL {name; pars; body} }
 
 typ:
   | "i32" {  }
@@ -96,10 +96,10 @@ expr:
   | "(" e = expr ")" { e }
   | "if" e0 = expr e1 = block_expr "else" e2 = block_expr { IFE(e0, e1, e2) }
   | "loop" e = block_expr { LOOP e }
-  | "&" m = boption("mut") e = expr { REF (m, e) }
+  | "&" mut = boption("mut") e = expr { REF { mut; e } }
 
 statement:
-  | "let" m = boption("mut") x = ID "=" e = expr { LET(x, m, e) }
+  | "let" mut = boption("mut") name = ID "=" body = expr { LET{name; mut; body} }
   | e = expr { EXPR e }
   | i = item { i }
   | s1 = statement ";" s2 = statement { SEQ (s1, s2) }

@@ -1,213 +1,149 @@
 open Ast
 open Types
 open Utils
+open Errors
 
 type ide = string [@@deriving show]
+type loc = int [@@deriving show]
+type fn_data = { pars : ide list; body : expr } [@@deriving show]
 
 type ty = T_String | T_Ref of bool * ty | T_I32 | T_Bool | T_Unit
 [@@deriving show]
 
-type parameter = ide [@@deriving show]
-
-type loc = Stack of int | Heap of int [@@deriving show]
-
-type trace_error =
-  | TypeError of string
-  | CannotMutate of ide
-  | MutBorrowOfNonMut of ide
-  | DataRace of ide * bool * bool
-  | UnboundVar of ide
-  | OutOfGas of int
-  | NotInLoop
-  | MovedValue of ide
-  | TODO
-[@@deriving show]
-
-let string_of_trace_error = function
-  | TypeError s -> spr "[TypeError] %s" s
-  | CannotMutate x -> spr "[CannotMutate] cannot mutate immutable variable %s" x
-  | UnboundVar x -> spr "[UnboundVar] %s not defined in this scope" x
-  | MovedValue x -> spr "[MovedValue] borrow of moved value %s" x
-  | OutOfGas i -> spr "[OutOfGas] trace run out of gas (%d)" i
-  | NotInLoop -> "[NotInLoop] tried to break outside of a loop"
-  | MutBorrowOfNonMut x ->
-      spr
-        "[MutBorrowOfNonMut] cannot borrow %s as mutable, as it is not \
-         declared as mutable"
-        x
-  | DataRace (x, mut1, mut2) ->
-      let format_mut m = if m then "mutable" else "immutable" in
-      spr "[DataRace] cannot borrow %s as %s because it is also borrowed as %s"
-        x (format_mut mut1) (format_mut mut2)
-  | TODO -> "[TODO]"
-
-type 'a trace_result = ('a, trace_error) result
-
 type prim = PRINTLN [@@deriving show]
 
-(** The type of values that the environment keeps track of *)
 type stackval =
   | I32 of int
   | Bool of bool
   | Ref of bool * int
   | Unit
-  | String of string
+  | StringSlice of string
 [@@deriving show]
 
-type variable = { mut : bool; mutable value : stackval } [@@deriving show]
-(** The information associated to a variable in the environment *)
-
-(** The type of items that can be associated to a name in the environment *)
-type envval = Var of variable | Fun of parameter list * expr | Prim of prim
+type envval =
+  | HeapVal of loc
+  | StackVal of { mut : bool; mutable value : stackval }
+  | Fn of fn_data
+  | Prim of prim
 [@@deriving show]
 
-let string_of_stackval = function
-  | I32 i -> string_of_int i
-  | Unit -> "()"
-  | Bool b -> string_of_bool b
-  | String s -> s
-  | Ref (_, i) -> spr "ref: %d" i
-
-let string_of_envval = function
-  | Var { mut; value } ->
-      spr "%s %s" (if mut then "mut" else "") (string_of_stackval value)
-  | Fun _ -> "<fun>"
-  | Prim _ -> "<prim>"
-
-module StringMap = Map.Make (String)
 module Env = struct
-  include StringMap
+  module H = Hashtbl.Make (String)
+  include H
+  type t = envval H.t
 
-  type t = envval StringMap.t
+  let find env ide : envval trace_result =
+    match H.find_opt env ide with
+    | Some v -> Result.ok v
+    | None -> Result.error (UnboundVar ide)
+end
 
-  let string_of_env env =
-    StringMap.fold
-      (fun x v acc -> spr "{%s:%s} %s" x (string_of_envval v) acc)
-      env ""
+module OwnedLocation = struct
+  type t = { loc : int; owner : ide }
 
-  let bottom = StringMap.empty
-
-  let get (env : t) (ide : ide) : envval trace_result =
-    let open R in
-    match StringMap.find_opt ide env with
-    | Some v -> ok v
-    | None -> error @@ UnboundVar ide
-
-  let bind (env : t) (ide : ide) (v : envval) = StringMap.add ide v env
-
-  let borrow _ = R.error TODO
-
-  let move _ = R.error TODO
+  let equal o1 o2 = o1.loc = o2.loc && o1.owner = o2.owner
+  let hash = Hashtbl.hash
 end
 
 module Heap = struct
-  include Map.Make (Int)
+  module H = Hashtbl.Make (OwnedLocation)
+  include H
+  type heap_value = string
+  type t = heap_value H.t
 
-  let drop _ = R.error TODO
+  let find h loc owner : heap_value trace_result =
+    let key : OwnedLocation.t = { loc; owner } in
+    match find_opt h key with
+    | Some v -> Result.ok v
+    | None -> Result.error (MovedValue owner)
+
+  let drop = H.remove
 end
 
 type env = Env.t
-type mem = string Heap.t
+type mem = Heap.t
 
-module St = struct
-  type t = {
-    envstack : env Stack.t;
-    mutable loop_level : int;
-    toplevel : env;
-    mutable output : string;
-  }
-  [@@deriving fields]
+type state = {
+          memory     : mem;
+          envstack   : env Stack.t;
+          toplevel   : env;
+  mutable loop_level : int;
+  mutable output     : string;
+}
+[@@deriving fields]
+[@@ocamlformat "disable"]
 
-  let prelude = Env.bind Env.bottom "println" (Prim PRINTLN)
+let init () =
+  let prelude = Env.create 99 in
+  let envstack = Stack.create () in
+  let memory = Heap.create 99 in
+  Env.add prelude "println" (Prim PRINTLN);
+  Stack.push prelude envstack;
+  { memory; envstack; toplevel = prelude; loop_level = 0; output = "" }
 
-  let init () =
-    let envstack = Stack.create () in
-    Stack.push prelude envstack;
-    { envstack; loop_level = 0; toplevel = prelude; output = "" }
+let copy st =
+  { st with envstack = Stack.copy st.envstack; memory = Heap.copy st.memory }
 
-  let topenv st = Stack.top st.envstack
-  let popenv st = Stack.drop st.envstack
-  let pushenv st env = Stack.push env st.envstack
-  let newenv st = Stack.push prelude st.envstack
-  let set_topenv st env =
-    ignore (Stack.pop_opt st.envstack);
-    Stack.push env st.envstack
+let topenv st = Stack.top st.envstack
+let popenv st = Stack.drop st.envstack
+let pushenv st env = Stack.push env st.envstack
+let new_block_env st = pushenv st (topenv st)
+let new_fn_env st = pushenv st (Env.copy st.toplevel)
+let set_topenv st env =
+  ignore (Stack.pop_opt st.envstack);
+  Stack.push env st.envstack
 
-  let append_output st s = st.output <- st.output ^ s
+let append_output st s = st.output <- st.output ^ s
 
-  let enter_loop st = st.loop_level <- st.loop_level + 1
-  let exit_loop st =
-    let open R in
-    if st.loop_level > 0 then (
-      st.loop_level <- st.loop_level - 1;
-      ok ())
-    else error NotInLoop
+let enter_loop st = st.loop_level <- st.loop_level + 1
+let exit_loop st =
+  let open Result in
+  if st.loop_level > 0 then (
+    st.loop_level <- st.loop_level - 1;
+    ok ())
+  else error NotInLoop
 
-  let string_of_envstack st =
-    Stack.fold (fun acc env -> acc ^ Env.string_of_env env) "" st.envstack
+let get_var st x : stackval trace_result =
+  let open Result in
+  let env = topenv st in
+  let* v = Env.find env x in
+  match v with
+  | HeapVal loc ->
+      let* value = Heap.find st.memory loc x in
+      ok (StringSlice value)
+  | StackVal { mut; value } -> ok value
+  | _ -> error (TypeError (spr "%s is a function, but I expected a value" x))
 
-  let to_string st =
-    spr "<%s>" (string_of_envstack st)
+let get_fn st x : [ `Fn of fn_data | `Prim of prim ] trace_result =
+  let open Result in
+  let env = topenv st in
+  let* v = Env.find env x in
+  match v with
+  | Fn data -> ok (`Fn data)
+  | Prim prim -> ok (`Prim prim)
+  | _ -> error (TypeError (spr "%s is a value, but I expected a function" x))
 
-  let get_var st x : stackval trace_result =
-    let open R in
-    Stack.fold
-      (fun acc env ->
-        (let* v = Env.get env x in
-         match v with
-         | Var { mut; value } -> ok value
-         | _ ->
-             error
-               (TypeError
-                  (spr "%s is bound to a function, but I expected a value" x)))
-        <|> acc)
-      (Error (UnboundVar x)) st.envstack
+let new_var ~(mut : bool) st x v : unit trace_result =
+  let env = topenv st in
+  Env.add env x (StackVal { mut; value = v });
+  Result.ok ()
 
-  let let_var ~(mut : bool) st x v : unit trace_result =
-    let open R in
-    let env = topenv st in
-    let env' = Env.bind env x (Var { mut; value = v }) in
-    ok (set_topenv st env')
+let update_var st x v : unit trace_result =
+  let open Result in
+  let env = topenv st in
+  let* res = Env.find env x in
+  match res with
+  | StackVal data ->
+      if data.mut then ok (data.value <- v) else error (CannotMutate x)
+  | _ -> error (TypeError (spr "cannot assign to the function %s" x))
 
-  let bind_var st x v : unit trace_result =
-    let open R in
-    let env = topenv st in
-    let* res = Env.get env x in
-    match res with
-    | Var { mut = false; _ } -> error (CannotMutate x)
-    | Var ({ mut; value = old_value } as data) ->
-        let env' = Env.bind env x (Var { data with value = v }) in
-        ok (set_topenv st env')
-    | _ -> error (TypeError (spr "cannot assign to the function %s" x))
-end
+let new_fn st name pars body = Env.add (topenv st) name (Fn { pars; body })
 
-type state = St.t
-
-module Prim = struct
-  let println (st : state) s : unit trace_result =
-    let open R in
-    let open Re in
-    let re =
-      compile
-      @@ seq
-           [ char '{'; group (rep1 @@ compl [ char '{'; char '}' ]); char '}' ]
-    in
-    let* line =
-      split_full re s
-      |> List.fold_left
-           (fun acc tok ->
-             let* acc = acc in
-             let* next =
-               match tok with
-               | `Text s -> ok s
-               | `Delim groups ->
-                   let var = Group.get groups 1 in
-                   let* v = St.get_var st var in
-                   ok (string_of_stackval v)
-             in
-             ok (acc ^ next))
-           (ok "")
-    in
-    St.append_output st (line ^ "\n");
-    ok ()
-end
+let state_of_prog (prog : statement list) : state =
+  let st = init () in
+  List.iter
+    (function
+      | FUNDECL data -> new_fn st data.name data.pars data.body
+      | _ -> failwith "error initializing state: not a toplevel item")
+    prog;
+  { st with toplevel = Env.copy (topenv st) }

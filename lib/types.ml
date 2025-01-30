@@ -1,7 +1,7 @@
 open Ast
 open Utils
 
-module R = struct
+module Result = struct
   include Result
 
   let ( <$> ) = map

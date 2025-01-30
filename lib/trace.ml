@@ -2,6 +2,9 @@ open Ast
 open Types
 open State
 open Utils
+open Errors
+
+type 'a trace_result = ('a, trace_error) result
 
 type conf = LoopContinue | Break | Stop | Continue of statement
 [@@deriving variants]
@@ -11,27 +14,27 @@ let expr_of_stackval : stackval -> expr = function
   | Bool true -> TRUE
   | Bool false -> FALSE
   | Unit -> UNIT
-  | Ref (m, i) -> REF (m, CONST i)
-  | String s -> STRING s
+  | Ref (mut, i) -> REF { mut; e = CONST i }
+  | StringSlice s -> STRING s
 
 let stackval_of_expr : expr -> stackval trace_result =
-  let open R in
+  let open Types.Result in
   function
   | CONST n -> ok (I32 n)
-  | STRING s -> ok (String s)
+  | STRING s -> ok (StringSlice s)
   | UNIT -> ok Unit
   | _ -> error (TypeError "Not a value")
 
 let ( let& ) ((constr, e) : (expr -> 'term) * expr trace_result)
     (action : expr -> 'term trace_result) : 'term trace_result =
-  let open R in
+  let open Types.Result in
   let* e = e in
   if is_value e then action e else return (constr e)
 
 let ( let$ ) ((constr, s) : (statement -> 'term) * conf trace_result)
     (action : [ `Nothing | `Break | `LoopContinue ] -> 'term trace_result) :
     'term trace_result =
-  let open R in
+  let open Types.Result in
   let* s = s in
   match s with
   | Continue s -> return (constr s)
@@ -39,32 +42,32 @@ let ( let$ ) ((constr, s) : (statement -> 'term) * conf trace_result)
   | Break -> action `Break
   | LoopContinue -> action `LoopContinue
 
-let rec trace1_expr (st : state) (e : expr) : expr trace_result =
-  let open R in
+let rec trace1_expr st (e : expr) : expr trace_result =
+  let open Types.Result in
   match e with
   | TRUE | FALSE | UNIT | CONST _ | STRING _ -> return e
   | VAR x ->
-      let* res = St.get_var st x in
+      let* res = State.get_var st x in
       expr_of_stackval res |> return
   | ARITH2 (op, e1, e2) -> arith2 op <$> trace1_expr st e1 <*> trace1_expr st e2
   | ASSIGN (x, e) ->
       let& e' = (assign x, trace1_expr st e) in
       let* v = stackval_of_expr e' in
-      let* _ = St.bind_var st x v in
+      let* _ = State.update_var st x v in
       return UNIT
   | BLOCK (s, e) ->
-      St.newenv st;
+      State.new_block_env st;
       return (BLOCK_EXEC (s, e))
   | BLOCK_EXEC (s, e) -> (
       let$ _ = ((fun s' -> block_exec s' e), trace1_statement st s) in
       match e with
       | None ->
-          St.popenv st;
+          State.popenv st;
           return UNIT
       | Some e -> return (BLOCK_RET e))
   | BLOCK_RET e ->
       let& v = (block_ret, trace1_expr st e) in
-      St.popenv st;
+      State.popenv st;
       return v
   | CALL (f, args) -> trace1_args st f [] args
   | IFE (e0, e1, e2) -> (
@@ -79,23 +82,23 @@ let rec trace1_expr (st : state) (e : expr) : expr trace_result =
         | Some e -> seq s (expr e)
         | None -> s
       in
-      St.newenv st;
-      St.enter_loop st;
+      State.new_block_env st;
+      State.enter_loop st;
       return (loop_exec s s)
-  | LOOP_EXEC (original, s) -> (
-      let$ b = (loop_exec original, trace1_statement st s) in
+  | LOOP_EXEC e -> (
+      let$ b = (loop_exec e.orig, trace1_statement st e.curr) in
       match b with
       | `Break ->
-          let* _ = St.exit_loop st in
-          St.popenv st;
+          let* _ = State.exit_loop st in
+          State.popenv st;
           return UNIT
-      | _ -> return (loop_exec original original))
+      | _ -> return (loop_exec e.orig e.orig))
   | BREAK -> return BREAK
   | _ -> error TODO
 
-and trace1_args (st : state) (f : ide) (vals : expr list) (args : expr list) :
+and trace1_args st (f : ide) (vals : expr list) (args : expr list) :
     expr trace_result =
-  let open R in
+  let open Types.Result in
   match args with
   | [] -> call_fun st f vals
   | v :: args when is_value v -> trace1_args st f (v :: vals) args
@@ -103,41 +106,41 @@ and trace1_args (st : state) (f : ide) (vals : expr list) (args : expr list) :
       let* arg' = trace1_expr st arg in
       return (CALL (f, arg' :: args))
 
-and call_fun (st : state) (f : ide) (args : expr list) : expr trace_result =
-  let open R in
-  let env = St.topenv st in
-  let* res = Env.get env f in
-  match res with
-  | Fun (pars, BLOCK (body, ret)) ->
-      St.pushenv st St.prelude;
+and call_fun st (f : ide) (args : expr list) : expr trace_result =
+  let open Types.Result in
+  match State.get_fn st f with
+  | Ok (`Fn { pars; body = BLOCK (commands, ret) }) ->
+      State.new_fn_env st;
       let* _ =
         List.fold_left2
           (fun _ par arg ->
             let* v = stackval_of_expr arg in
-            St.bind_var st par v)
+            State.new_var ~mut:false st par v)
           (ok ()) pars args
       in
-      return (BLOCK_EXEC (body, ret))
-  | Prim prim -> (
+      return (BLOCK_EXEC (commands, ret))
+  | Ok (`Prim prim) -> (
       match args with
       | [ STRING s ] ->
           let* _ = Prim.println st s in
           ok UNIT
       | _ -> ok UNIT)
-  | _ -> error (TypeError (spr "Cannot call a non-function %s" f))
+  | Ok _ -> failwith "Impossible, I believe"
+  | Error err -> Error err
 
-and trace1_statement (st : state) (t : statement) : conf trace_result =
-  let open R in
+and trace1_statement st (t : statement) : conf trace_result =
+  let open Types.Result in
   match t with
   | EMPTY -> return stop
-  | LET (x, mut, e) ->
-      let& v = (continue % let_stmt x mut, trace1_expr st e) in
+  | LET data ->
+      let& v =
+        (continue % let_stmt data.name data.mut, trace1_expr st data.body)
+      in
       let* v = stackval_of_expr v in
-      let* _ = St.let_var st x v ~mut in
+      let* _ = State.new_var st data.name v ~mut:data.mut in
       return stop
-  | FUNDECL (x, pars, body) ->
-      let env' = Env.bind (St.topenv st) x (Fun (pars, body)) in
-      St.set_topenv st env';
+  | FUNDECL data ->
+      State.new_fn st data.name data.pars data.body;
       return stop
   | EXPR e -> (
       let& v = (continue % expr, trace1_expr st e) in
@@ -148,26 +151,26 @@ and trace1_statement (st : state) (t : statement) : conf trace_result =
       let$ _ = ((continue % fun s1' -> seq s1' s2), trace1_statement st s1) in
       return (continue s2)
 
-let read_toplevel (st : state) (s : statement) : unit =
-  match s with
-  | FUNDECL (x, pars, body) ->
-      let env' = Env.bind (St.topenv st) x (Fun (pars, body)) in
-      St.set_topenv st env'
-  | _ -> failwith "Not a toplevel item"
+type snapshot = { expr : expr; state : state }
 
-let trace_prog (n_steps : int) (prog : statement list) :
-    state * expr list * expr trace_result =
-  let open R in
-  let st = St.init () in
-  List.iter (read_toplevel st) prog;
-  let st = { st with toplevel = St.topenv st } in
-  let rec go i (acc : expr list) (e : expr) : expr list * expr trace_result =
+type trace_outcome = {
+  result : expr trace_result;
+  trace : snapshot list;
+  state : state;
+}
+
+let trace_prog (n_steps : int) (prog : statement list) : trace_outcome =
+  let open Types.Result in
+  let st = State.state_of_prog prog in
+  let rec go i (acc : snapshot list) expr : snapshot list * expr trace_result =
     if i < n_steps then
-      match trace1_expr st e with
-      | Ok e' -> if is_value e' then (acc, ok e') else go (i + 1) (e :: acc) e'
+      match trace1_expr st expr with
+      | Ok e' ->
+          if is_value e' then (acc, ok e')
+          else go (i + 1) ({ expr; state = State.copy st } :: acc) e'
       | err -> (acc, err)
     else (acc, error (OutOfGas n_steps))
   in
-  let entry = CALL ("main", []) in
-  let lst, res = go 0 [] entry in
-  (st, List.rev lst, res)
+  let entry_point = CALL ("main", []) in
+  let lst, result = go 0 [] entry_point in
+  { state = st; trace = List.rev lst; result }

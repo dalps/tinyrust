@@ -1,4 +1,5 @@
 open TinyrustLib
+open Utils
 open Common
 
 (** ------------------------------------------

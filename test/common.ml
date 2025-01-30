@@ -1,10 +1,4 @@
-let ( % ) : ('b -> 'c) -> ('a -> 'b) -> ('a -> 'c) = fun g f x -> g (f x)
-
-let read_file filename =
-  let ch = open_in filename in
-  let str = really_input_string ch (in_channel_length ch) in
-  close_in ch;
-  str
+open TinyrustLib.Utils
 
 let examples_dir = "/home/dalpi/tinyrust/test/examples/"
 
@@ -22,5 +16,3 @@ let examples_dict =
   Array.map (
     fun e -> (e, read_file (abs_path e))
   ) examples
-
-let pr = Printf.printf

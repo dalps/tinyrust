@@ -17,15 +17,15 @@ type expr =
   | CALL of ide * expr list
   | IFE of expr * expr * expr
   | LOOP of expr
-  | LOOP_EXEC of statement * statement
-  | REF of bool * expr (* (mutable?, expr) *)
+  | LOOP_EXEC of { curr : statement; orig : statement }
+  | REF of { mut : bool; e : expr }
   | BREAK
   | BORROW of expr
 [@@deriving show]
 
 and statement =
-  | FUNDECL of ide * ide list * expr
-  | LET of ide * bool * expr
+  | FUNDECL of { name : ide; pars : ide list; body : expr }
+  | LET of { name : ide; mut : bool; body : expr }
   | SEQ of statement * statement
   | EXPR of expr
   | EMPTY
@@ -35,11 +35,11 @@ let assign x e = ASSIGN (x, e)
 let block_exec s e = BLOCK_EXEC (s, e)
 let block_ret e = BLOCK_RET e
 let ife e0 e1 e2 = IFE (e0, e1, e2)
-let loop_exec original e = LOOP_EXEC (original, e)
+let loop_exec orig curr = LOOP_EXEC { orig; curr }
 
 let seq s1 s2 = SEQ (s1, s2)
 let expr e = EXPR e
-let let_stmt x mut e = LET (x, mut, e)
+let let_stmt name mut body = LET { name; mut; body }
 
 let apply_binop op n1 n2 : expr =
   match (op : binop) with
