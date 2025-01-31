@@ -1,4 +1,4 @@
 (executable
  (public_name tinyrust)
  (name main)
- (libraries tinyrustLib))
+ (libraries tinyrustLib ANSITerminal))

@@ -5,6 +5,6 @@ fn main() {
       println!("{y}");
     }
     interna(&x);
-  }
+  };
   interna(&x); // errore: not found in this scope
 }

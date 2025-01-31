@@ -4,6 +4,6 @@ fn main() {
     {
         let x = x * 2; // terza dichiarazione di x
         println!("{x}"); // output: 6
-    }
+    };
     println!("{x}"); // output: 3
 }

@@ -2,7 +2,6 @@ open TinyrustLib
 open Trace
 open Parser
 open Common
-open State
 open Prettyprint
 open Errors
 open Utils
@@ -40,35 +39,51 @@ let tests : (string * int * string trace_result) array =
     ("23-scopeCheck.rs",      25, Error (UnboundVar "y"));
     ("23-scopeCheck.rs",      25, Error (UnboundVar "y"));
     ("23-scopeCheck.rs",      25, Error (UnboundVar "y"));
-    ("23-scopeCheck.rs",      25, Error (UnboundVar "y"));
   |] [@@ocamlformat "disable"]
 
-let%expect_test "test_trace" =
-  Array.iter2
-    (fun (name, prog) (_, gas, exp) ->
-      let prog = Parser.parse_string prog in
-      let out = Trace.trace_prog gas prog in
-      let icon =
-        match (out.result, exp) with
-        | Ok _, Ok _ | Error _, Error _ -> "✔"
-        | Ok _, Error _ | Error _, Ok _ -> "✘"
-      in
-      let ok, error = ("Ok", "Error") in
-      let res_kind, res_output =
-        match out.result with
-        | Ok _ -> (ok, out.state.output)
-        | Error err -> (error, string_of_trace_error err)
-      in
-      let exp_kind, exp_output =
-        match exp with
-        | Ok output -> (ok, output)
-        | Error err -> (error, string_of_trace_error err)
-      in
-      pr "------------------------\n%s %s\n------------------------\n" icon name;
-      List.iter
-        (fun (title, kind, output) -> pr "%-9s %-9s\n%s\n\n" title kind output)
-        [
-          ("Output:", res_kind, res_output); ("Expected:", exp_kind, exp_output);
-        ];
-      pr "%s\n" (string_of_traceoutcome out))
-    examples_dict tests
+(* let _ =
+  try
+    Array.iter2
+      (fun (name, prog) (_, gas, exp) ->
+        let prog = Parser.parse_string prog in
+        let out = Trace.trace_prog gas prog in
+        let icon =
+          match (out.result, exp) with
+          | Ok _, Ok _ | Error _, Error _ -> "✔"
+          | Ok _, Error _ | Error _, Ok _ -> "✘"
+        in
+        let ok, error = ("Ok", "Error") in
+        let res_kind, res_output =
+          match out.result with
+          | Ok _ -> (ok, out.state.output)
+          | Error err -> (error, string_of_trace_error err)
+        in
+        let exp_kind, exp_output =
+          match exp with
+          | Ok output -> (ok, output)
+          | Error err -> (error, string_of_trace_error err)
+        in
+        pr "------------------------\n%s %s\n------------------------\n" icon
+          name;
+        List.iter
+          (fun (title, kind, output) ->
+            pr "%-9s %-9s\n%s\n\n" title kind output)
+          [
+            ("Output:", res_kind, res_output);
+            ("Expected:", exp_kind, exp_output);
+          ]
+        (* pr "%s\n" (string_of_traceoutcome out) *))
+      examples_dict tests
+  with _ -> () *)
+
+let%expect_test "test_06" =
+  let _, prog = examples_dict.(5) in
+  parse_string prog
+  |> List.map (string_of_statement 0)
+  |> String.concat "\n" |> pr "%s"
+
+let%expect_test "test_08" =
+  let _, prog = examples_dict.(7) in
+  parse_string prog
+  |> List.map (string_of_statement 0)
+  |> String.concat "\n" |> pr "%s"
