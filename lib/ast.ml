@@ -24,7 +24,12 @@ type expr =
 [@@deriving show]
 
 and statement =
-  | FUNDECL of { name : ide; pars : ide list; body : expr }
+  | FUNDECL of {
+      name : ide;
+      pars : ide list;
+      body : statement;
+      ret : expr option;
+    }
   | LET of { name : ide; mut : bool; body : expr }
   | SEQ of statement * statement
   | EXPR of expr
@@ -59,5 +64,9 @@ let arith2 op e1 e2 =
 let is_value = function
   | TRUE | FALSE | CONST _ | STRING _ | UNIT -> true
   | _ -> false
+
+let remove_block = function
+  | BLOCK (s, e) -> (s, e)
+  | _ -> failwith "Not a block expression"
 
 type crate = statement list [@@deriving show]

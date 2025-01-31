@@ -4,6 +4,13 @@ open Utils
 open Errors
 open Trace
 
+let tabs i =
+  let tab = ANSITerminal.(sprintf [ black ] "..") in
+  Seq.repeat tab |> Seq.take i |> List.of_seq |> String.concat ""
+
+let keyword = ANSITerminal.(sprintf [ cyan; Bold ])
+let value = ANSITerminal.(sprintf [ green ] "%s")
+
 let string_of_var x = x
 
 let string_of_binop (op : Ast.binop) =
@@ -18,27 +25,36 @@ let string_of_binop (op : Ast.binop) =
 
 let rec string_of_expr indent (expr : Ast.expr) : string =
   match expr with
-  | UNIT -> "()"
-  | TRUE -> "true"
-  | FALSE -> "false"
+  | UNIT -> "()" |> value
+  | TRUE -> "true" |> value
+  | FALSE -> "false" |> value
   | VAR x -> string_of_var x
-  | CONST n -> string_of_int n
-  | STRING s -> s
+  | CONST n -> string_of_int n |> value
+  | STRING s -> spr "\"%s\"" s |> value
   | ARITH2 (op, e1, e2) ->
       spr "%s %s %s" (string_of_expr indent e1) (string_of_binop op)
         (string_of_expr indent e2)
   | ASSIGN (x, e) -> spr "%s = %s" (string_of_var x) (string_of_expr indent e)
-  | BLOCK (s, None) -> spr "{\n%s\n}\n" (string_of_statement (indent + 1) s)
+  | BLOCK (s, None) ->
+      spr "{\n%s\n%s}" (string_of_statement (indent + 1) s) (tabs indent)
   | BLOCK (s, Some e) ->
-      spr "{\n%s;\n%s\n}\n"
+      spr "{\n%s\n%s%s\n%s}"
         (string_of_statement (indent + 1) s)
-        (string_of_expr indent e)
+        (tabs (indent + 1))
+        (string_of_expr (indent + 1) e)
+        (tabs indent)
   | BLOCK_EXEC (s, None) ->
-      spr "[exec]{\n%s\n}\n" (string_of_statement (indent + 1) s)
-  | BLOCK_EXEC (s, Some e) ->
-      spr "[exec]{\n%s;\n%s\n}\n"
+      spr "{%s\n%s\n%s}"
+        ANSITerminal.(sprintf [ red ] "exec")
         (string_of_statement (indent + 1) s)
-        (string_of_expr indent e)
+        (tabs indent)
+  | BLOCK_EXEC (s, Some e) ->
+      spr "{%s\n%s\n%s%s\n%s}"
+        ANSITerminal.(sprintf [ red ] "exec")
+        (string_of_statement (indent + 1) s)
+        (tabs (indent + 1))
+        (string_of_expr (indent + 1) e)
+        (tabs indent)
   | BLOCK_RET e -> string_of_expr indent e
   | CALL (x, es) ->
       let arg_strings =
@@ -46,44 +62,55 @@ let rec string_of_expr indent (expr : Ast.expr) : string =
       in
       spr "%s(%s)" (string_of_var x) arg_strings
   | IFE (e0, e1, e2) ->
-      spr "if %s {\n%s\n} else {\n%s\n}" (string_of_expr indent e0)
-        (string_of_expr (indent + 1) e1)
-        (string_of_expr (indent + 1) e2)
-  | LOOP e -> spr "loop {\n%s\n}" (string_of_expr indent e)
-  | LOOP_EXEC e ->
-      spr "loop [exec]{\n%s\n}" (string_of_statement (indent + 1) e.curr)
+      spr "%s %s %s %s %s" (keyword "if") (string_of_expr indent e0)
+        (string_of_expr indent e1) (keyword "else") (string_of_expr indent e2)
+  | LOOP e -> spr "%s %s" (keyword "loop") (string_of_expr indent e)
+  | LOOP_EXEC data ->
+      spr "%s {%s\n%s\n%s}" (keyword "loop")
+        ANSITerminal.(sprintf [ red ] "exec")
+        (string_of_statement (indent + 1) data.curr)
+        (tabs indent)
   | REF e ->
-      spr "&%s%s" (if e.mut then "mut " else "") (string_of_expr indent e.e)
-  | BREAK -> "break"
+      spr "&%s%s"
+        (if e.mut then keyword "mut " else "")
+        (string_of_expr indent e.e)
+  | BREAK -> keyword "break"
   | _ -> "?"
 
 and string_of_statement indent (stmt : Ast.statement) =
-  let tabs i =
-    Seq.repeat "  " |> Seq.take i |> List.of_seq |> String.concat ""
-  in
+  pr "Tabs: %-4d %-8s\n" indent
+    (match stmt with
+    | FUNDECL _ -> "fn"
+    | LET _ -> "let"
+    | SEQ (_, _) -> "seq"
+    | EXPR _ -> "expr"
+    | EMPTY -> "empty");
   match stmt with
   | FUNDECL data ->
-      spr "%sfn %s(%s) {\n%s\n}" (tabs indent) data.name
+      spr "%s%s %s(%s) {\n%s\n%s}" (tabs indent) (keyword "fn") data.name
         (String.concat ", " data.pars)
-        (string_of_expr (indent + 1) data.body)
+        (string_of_statement (indent + 1) data.body)
+        (Option.fold ~none:""
+           ~some:(fun e ->
+             spr "%s%s\n" (tabs (indent + 1)) (string_of_expr (indent + 1) e))
+           data.ret)
   | LET data ->
-      spr "%slet %s%s = %s;" (tabs indent)
+      spr "%s%s %s%s = %s;" (tabs indent) (keyword "let")
         (if data.mut then "mut " else "")
         data.name
         (string_of_expr indent data.body)
   | SEQ (s1, s2) ->
-      spr "%s%s\n%s%s" (tabs indent)
-        (string_of_statement indent s1)
-        (tabs indent)
-        (string_of_statement indent s2)
+      let s1 = string_of_statement indent s1 in
+      let s2 = string_of_statement indent s2 in
+      spr "%s\n%s" s1 s2
   | EXPR e -> spr "%s%s;" (tabs indent) (string_of_expr indent e)
-  | EMPTY -> ""
+  | EMPTY -> spr "%s" (tabs indent)
 
 let string_of_stackval = function
   | I32 i -> string_of_int i
   | Unit -> "()"
   | Bool b -> string_of_bool b
-  | StringSlice s -> spr "\"%s\"" s
+  | StringSlice s -> spr "\"foo%s\"" s
   | Ref (_, i) -> spr "ref: %d" i
 
 let string_of_envval = function

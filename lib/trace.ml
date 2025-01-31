@@ -62,12 +62,12 @@ let rec trace1_expr st (e : expr) : expr trace_result =
       let$ _ = ((fun s' -> block_exec s' e), trace1_statement st s) in
       match e with
       | None ->
-          State.popenv st;
+          State.dropenv st;
           return UNIT
       | Some e -> return (BLOCK_RET e))
   | BLOCK_RET e ->
       let& v = (block_ret, trace1_expr st e) in
-      State.popenv st;
+      State.dropenv st;
       return v
   | CALL (f, args) -> trace1_args st f [] args
   | IFE (e0, e1, e2) -> (
@@ -90,7 +90,7 @@ let rec trace1_expr st (e : expr) : expr trace_result =
       match b with
       | `Break ->
           let* _ = State.exit_loop st in
-          State.popenv st;
+          State.dropenv st;
           return UNIT
       | _ -> return (loop_exec e.orig e.orig))
   | BREAK -> return BREAK
@@ -109,7 +109,7 @@ and trace1_args st (f : ide) (vals : expr list) (args : expr list) :
 and call_fun st (f : ide) (args : expr list) : expr trace_result =
   let open Types.Result in
   match State.get_fn st f with
-  | Ok (`Fn { pars; body = BLOCK (commands, ret) }) ->
+  | Ok (`Fn { pars; body; ret }) ->
       State.new_fn_env st;
       let* _ =
         List.fold_left2
@@ -118,14 +118,13 @@ and call_fun st (f : ide) (args : expr list) : expr trace_result =
             State.new_var ~mut:false st par v)
           (ok ()) pars args
       in
-      return (BLOCK_EXEC (commands, ret))
+      return (BLOCK_EXEC (body, ret))
   | Ok (`Prim prim) -> (
       match args with
       | [ STRING s ] ->
           let* _ = Prim.println st s in
           ok UNIT
       | _ -> ok UNIT)
-  | Ok _ -> failwith "Impossible, I believe"
   | Error err -> Error err
 
 and trace1_statement st (t : statement) : conf trace_result =
@@ -140,7 +139,7 @@ and trace1_statement st (t : statement) : conf trace_result =
       let* _ = State.new_var st data.name v ~mut:data.mut in
       return stop
   | FUNDECL data ->
-      State.new_fn st data.name data.pars data.body;
+      let* _ = State.new_fn st data.name data.pars data.body data.ret in
       return stop
   | EXPR e -> (
       let& v = (continue % expr, trace1_expr st e) in

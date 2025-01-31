@@ -5,7 +5,8 @@ open Errors
 
 type ide = string [@@deriving show]
 type loc = int [@@deriving show]
-type fn_data = { pars : ide list; body : expr } [@@deriving show]
+type fn_data = { pars : ide list; body : statement; ret : expr option }
+[@@deriving show]
 
 type ty = T_String | T_Ref of bool * ty | T_I32 | T_Bool | T_Unit
 [@@deriving show]
@@ -147,14 +148,16 @@ let update_var st x v : unit trace_result =
           else error (CannotMutate x)
       | _ -> error (TypeError (spr "cannot assign to the function %s" x)))
 
-let new_fn st name pars body =
-  update_topenv st (fun env -> Result.ok (Env.add name (Fn { pars; body }) env))
+let new_fn st name pars body ret =
+  update_topenv st (fun env ->
+      Result.ok (Env.add name (Fn { pars; body; ret }) env))
 
 let state_of_prog (prog : statement list) : state =
   let st = init () in
   List.iter
     (function
-      | FUNDECL data -> new_fn st data.name data.pars data.body |> ignore
+      | FUNDECL data ->
+          new_fn st data.name data.pars data.body data.ret |> ignore
       | _ -> failwith "error initializing state: not a toplevel item")
     prog;
   { st with toplevel = topenv st }

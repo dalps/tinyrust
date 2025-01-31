@@ -60,7 +60,9 @@ item:
   | f = fun_decl { f }
 
 fun_decl:
-  | "fn" name = ID "(" pars = separated_list(COMMA, fun_parameter) ")" option(fun_return_type) body = block_expr { FUNDECL {name; pars; body} }
+  | "fn" name = ID "(" pars = separated_list(COMMA, fun_parameter) ")" option(fun_return_type) body = block_expr { 
+    let body, ret = remove_block body in
+    FUNDECL {name; pars; body; ret} }
 
 typ:
   | "i32" {  }
