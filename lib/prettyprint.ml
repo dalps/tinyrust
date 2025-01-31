@@ -4,14 +4,6 @@ open Utils
 open Errors
 open Trace
 
-let join sep strings =
-  let rec go = function
-    | [] -> ""
-    | [ s ] -> s
-    | s :: ss -> s ^ sep ^ go ss
-  in
-  go strings
-
 let string_of_var x = x
 
 let string_of_binop (op : Ast.binop) =
@@ -24,7 +16,7 @@ let string_of_binop (op : Ast.binop) =
   | EQ -> "=="
   | LEQ -> "<="
 
-let rec string_of_expr (expr : Ast.expr) : string =
+let rec string_of_expr indent (expr : Ast.expr) : string =
   match expr with
   | UNIT -> "()"
   | TRUE -> "true"
@@ -33,40 +25,58 @@ let rec string_of_expr (expr : Ast.expr) : string =
   | CONST n -> string_of_int n
   | STRING s -> s
   | ARITH2 (op, e1, e2) ->
-      spr "%s %s %s" (string_of_expr e1) (string_of_binop op)
-        (string_of_expr e2)
-  | ASSIGN (x, e) -> spr "%s = %s" (string_of_var x) (string_of_expr e)
-  | BLOCK (s, None) -> spr "{\n%s\n}\n" (string_of_statement s)
+      spr "%s %s %s" (string_of_expr indent e1) (string_of_binop op)
+        (string_of_expr indent e2)
+  | ASSIGN (x, e) -> spr "%s = %s" (string_of_var x) (string_of_expr indent e)
+  | BLOCK (s, None) -> spr "{\n%s\n}\n" (string_of_statement (indent + 1) s)
   | BLOCK (s, Some e) ->
-      spr "{\n%s;\n%s\n}\n" (string_of_statement s) (string_of_expr e)
-  | BLOCK_EXEC (s, None) -> spr "[exec]{\n%s\n}\n" (string_of_statement s)
+      spr "{\n%s;\n%s\n}\n"
+        (string_of_statement (indent + 1) s)
+        (string_of_expr indent e)
+  | BLOCK_EXEC (s, None) ->
+      spr "[exec]{\n%s\n}\n" (string_of_statement (indent + 1) s)
   | BLOCK_EXEC (s, Some e) ->
-      spr "[exec]{\n%s;\n%s\n}\n" (string_of_statement s) (string_of_expr e)
-  | BLOCK_RET e -> string_of_expr e
+      spr "[exec]{\n%s;\n%s\n}\n"
+        (string_of_statement (indent + 1) s)
+        (string_of_expr indent e)
+  | BLOCK_RET e -> string_of_expr indent e
   | CALL (x, es) ->
-      let arg_strings = List.map string_of_expr es |> join "," in
+      let arg_strings =
+        List.map (string_of_expr indent) es |> String.concat ","
+      in
       spr "%s(%s)" (string_of_var x) arg_strings
   | IFE (e0, e1, e2) ->
-      spr "if %s {\n%s\n} else {\n%s\n}" (string_of_expr e0) (string_of_expr e1)
-        (string_of_expr e2)
-  | LOOP e -> spr "loop {\n%s\n}" (string_of_expr e)
-  | LOOP_EXEC e -> spr "loop [exec]{\n%s\n}" (string_of_statement e.curr)
-  | REF e -> spr "&%s%s" (if e.mut then "mut " else "") (string_of_expr e.e)
+      spr "if %s {\n%s\n} else {\n%s\n}" (string_of_expr indent e0)
+        (string_of_expr (indent + 1) e1)
+        (string_of_expr (indent + 1) e2)
+  | LOOP e -> spr "loop {\n%s\n}" (string_of_expr indent e)
+  | LOOP_EXEC e ->
+      spr "loop [exec]{\n%s\n}" (string_of_statement (indent + 1) e.curr)
+  | REF e ->
+      spr "&%s%s" (if e.mut then "mut " else "") (string_of_expr indent e.e)
   | BREAK -> "break"
   | _ -> "?"
 
-and string_of_statement (stmt : Ast.statement) =
+and string_of_statement indent (stmt : Ast.statement) =
+  let tabs i =
+    Seq.repeat "  " |> Seq.take i |> List.of_seq |> String.concat ""
+  in
   match stmt with
   | FUNDECL data ->
-      spr "fn %s(%s) {\n%s\n}" data.name (join ", " data.pars)
-        (string_of_expr data.body)
+      spr "%sfn %s(%s) {\n%s\n}" (tabs indent) data.name
+        (String.concat ", " data.pars)
+        (string_of_expr (indent + 1) data.body)
   | LET data ->
-      spr "let %s%s = %s;"
+      spr "%slet %s%s = %s;" (tabs indent)
         (if data.mut then "mut " else "")
-        data.name (string_of_expr data.body)
+        data.name
+        (string_of_expr indent data.body)
   | SEQ (s1, s2) ->
-      spr "%s\n%s" (string_of_statement s1) (string_of_statement s2)
-  | EXPR e -> spr "%s;" (string_of_expr e)
+      spr "%s%s\n%s%s" (tabs indent)
+        (string_of_statement indent s1)
+        (tabs indent)
+        (string_of_statement indent s2)
+  | EXPR e -> spr "%s%s;" (tabs indent) (string_of_expr indent e)
   | EMPTY -> ""
 
 let string_of_stackval = function
@@ -84,12 +94,12 @@ let string_of_envval = function
   | Prim _ -> "<prim>"
 
 let string_of_env env =
-  Env.fold (fun k v acc -> spr "{%s:%s}" k (string_of_envval v) :: acc) env []
-  |> join ", "
+  Env.fold (fun k v acc -> spr "%s->%s" k (string_of_envval v) :: acc) env []
+  |> String.concat ", "
 
 let string_of_envstack envstack =
   Stack.fold (fun acc env -> spr "[%s]" (string_of_env env) :: acc) [] envstack
-  |> join ", "
+  |> String.concat "\n"
 
 let string_of_ownedlocation (o : OwnedLocation.t) = spr "%d@%s" o.loc o.owner
 
@@ -97,17 +107,25 @@ let string_of_memory h =
   Heap.fold
     (fun k v acc -> spr "%s->%s" (string_of_ownedlocation k) v :: acc)
     h []
-  |> join ", "
+  |> String.concat ", "
 
 let string_of_state st =
-  spr "<%s/%s>" (string_of_memory st.memory) (string_of_envstack st.envstack)
+  spr "%s\n%s\n%s\n%s\n"
+    ANSITerminal.(sprintf [ blue; Bold ] "Memory:")
+    (string_of_memory st.memory)
+    ANSITerminal.(sprintf [ blue; Bold ] "Envstack:")
+    (string_of_envstack st.envstack)
 
 let string_of_traceoutcome (d : trace_outcome) =
-  List.map
-    (fun (s : snapshot) ->
-      spr "%s\n%s" (string_of_state s.state) (string_of_expr s.expr))
+  List.mapi
+    (fun i (s : snapshot) ->
+      spr "%s\n%s\n%s\n%s"
+        ANSITerminal.(sprintf [ red ] "--- Step %d ---" i)
+        (string_of_state s.state)
+        ANSITerminal.(sprintf [ blue; Bold ] "Program:")
+        (string_of_expr 0 s.expr))
     d.trace
-  |> join "###\n"
+  |> String.concat "\n"
 
 let string_of_trace_error = function
   | TypeError s -> spr "[TypeError] %s" s
