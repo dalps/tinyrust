@@ -3,30 +3,33 @@ open Types
 open Utils
 open Errors
 
+(* Should the borrow type be carried by the environment or by the reference? *)
 type ide = string [@@deriving show]
-type loc = int [@@deriving show]
+type loc = {
+  mut : bool;
+  loc : [ `stack of int | `heap of int ];
+  borrows : [ `imm of ide list | `mut of ide ];
+}
+[@@deriving show]
 type fn_data = { pars : ide list; body : statement; ret : expr option }
 [@@deriving show]
 
 type ty = T_String | T_Ref of bool * ty | T_I32 | T_Bool | T_Unit
 [@@deriving show]
 
-type prim = PRINTLN [@@deriving show]
+type prim = PRINTLN | PUSH_STR [@@deriving show]
 
 type stackval =
   | I32 of int
   | Bool of bool
-  | Ref of bool * int
+  | Ref of bool * loc
   | Unit
-  | StringSlice of string
+  | Str of string
 [@@deriving show]
 
-type envval =
-  | HeapVal of loc
-  | StackVal of { mut : bool; mutable value : stackval }
-  | Fn of fn_data
-  | Prim of prim
-[@@deriving show]
+type 'v owned = { value : 'v; owner : ide }
+
+type envval = Loc of loc | Fn of fn_data | Prim of prim [@@deriving show]
 
 module Env = struct
   module H = Map.Make (String)
@@ -64,29 +67,57 @@ module Heap = struct
   let drop = H.remove
 end
 
+module Mem = struct
+  module M = Map.Make (Int)
+  include M
+  type t = stackval M.t
+
+  let find m loc : stackval trace_result =
+    find_opt loc m |> Option.to_result ~none:(SegFault loc)
+end
+
 type env = Env.t
-type mem = Heap.t
+type mem = Mem.t
+type heap = Heap.t
 
 type state = {
-          memory     : mem;
+  mutable memory     : mem;
+  mutable heap       : heap;
           envstack   : env Stack.t;
           toplevel   : env;
   mutable loop_level : int;
   mutable output     : string;
+  mutable locs       : unit -> int
 }
 [@@deriving fields]
 [@@ocamlformat "disable"]
 
 let init () =
   let envstack = Stack.create () in
-  let prelude = Env.empty in
-  let prelude = Env.add "println" (Prim PRINTLN) prelude in
-  let memory = Heap.empty in
+  let prelude =
+    Env.of_list [ ("println", Prim PRINTLN); ("push_str", Prim PUSH_STR) ]
+  in
+  let memory = Mem.empty in
+  let heap = Heap.empty in
+  let counter = ref 0 in
+  let locs () =
+    let c = !counter in
+    incr counter;
+    c
+  in
+  let _f = Seq.(ints 0 |> to_dispenser) in
   Stack.push prelude envstack;
-  { memory; envstack; toplevel = prelude; loop_level = 0; output = "" }
+  {
+    memory;
+    heap;
+    envstack;
+    toplevel = prelude;
+    loop_level = 0;
+    output = "";
+    locs;
+  }
 
 let copy st = { st with envstack = Stack.copy st.envstack }
-
 let topenv st = Stack.top st.envstack
 let popenv st = Stack.pop st.envstack
 let dropenv st = Stack.drop st.envstack
@@ -112,15 +143,40 @@ let exit_loop st =
     ok ())
   else error NotInLoop
 
+let borrow st x bob : loc trace_result =
+  let open Result in
+  let env = topenv st in
+  let* v = Env.find x env in
+  match v with
+  | Loc ({ borrows = `imm xs } as data) ->
+      let data = { data with borrows = `imm (bob :: xs) } in
+      let* _ = update_topenv st (fun env -> ok (Env.add x (Loc data) env)) in
+      ok data
+  | Loc { borrows = `mut _ } ->
+      error (DataRace { borrowed = x; is = `imm; want = `mut })
+  | _ -> error (TypeError "Non-value cannot be referenced")
+
+let borrow_mut st x bob : loc trace_result =
+  let open Result in
+  let env = topenv st in
+  let* v = Env.find x env in
+  match v with
+  | Loc ({ borrows = `imm [] } as data) ->
+      let data = { data with borrows = `mut bob } in
+      let* _ = update_topenv st (fun env -> ok (Env.add x (Loc data) env)) in
+      ok data
+  | Loc _ -> error (DataRace { borrowed = x; is = `mut; want = `mut })
+  | _ -> error (TypeError "Non-value cannot be referenced")
+
 let get_var st x : stackval trace_result =
   let open Result in
   let env = topenv st in
   let* v = Env.find x env in
   match v with
-  | HeapVal loc ->
-      let* value = Heap.find st.memory loc x in
-      ok (StringSlice value)
-  | StackVal { mut; value } -> ok value
+  | Loc { loc = `heap addr } ->
+      let* value = Heap.find st.heap addr x in
+      ok (Str value)
+  | Loc { loc = `stack addr } -> Mem.find st.memory addr
   | _ -> error (TypeError (spr "%s is a function, but I expected a value" x))
 
 let get_fn st x : [ `Fn of fn_data | `Prim of prim ] trace_result =
@@ -132,21 +188,42 @@ let get_fn st x : [ `Fn of fn_data | `Prim of prim ] trace_result =
   | Prim prim -> ok (`Prim prim)
   | _ -> error (TypeError (spr "%s is a value, but I expected a function" x))
 
-let new_var ~(mut : bool) st x v : unit trace_result =
-  update_topenv st (fun env ->
-      Result.ok (Env.add x (StackVal { mut; value = v }) env))
-
-let update_var st x v : unit trace_result =
+let new_var ~(mut : bool) st x init : unit trace_result =
   let open Result in
-  update_topenv st (fun env ->
-      let* res = Env.find x env in
-      match res with
-      | StackVal data ->
-          if data.mut then (
-            data.value <- v;
-            ok (Env.add x (StackVal data) env))
-          else error (CannotMutate x)
-      | _ -> error (TypeError (spr "cannot assign to the function %s" x)))
+  let loc = st.locs () in
+  let* _ =
+    update_topenv st (fun env ->
+        let loc =
+          {
+            mut;
+            loc =
+              (match init with
+              | `copy v ->
+                  st.memory <- Mem.add loc v st.memory;
+                  `stack loc
+              | `owned v ->
+                  st.heap <- Heap.add { loc; owner = x } v st.heap;
+                  `heap loc);
+            borrows = `imm [];
+          }
+        in
+        Result.ok (Env.add x (Loc loc) env))
+  in
+  ok ()
+
+(* Assignment moves r. Problem: change r's owner, but the owner is associated to locs, not value
+*)
+let set_var st l r : unit trace_result =
+  let open Result in
+  let env = topenv st in
+  let* res = Env.find l env in
+  match res with
+  | Loc { mut; loc } ->
+      if mut then (
+        st.memory <- Mem.add loc r st.memory;
+        ok ())
+      else error (CannotMutate l)
+  | _ -> error (TypeError (spr "cannot assign to the function %s" l))
 
 let new_fn st name pars body ret =
   update_topenv st (fun env ->

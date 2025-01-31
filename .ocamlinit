@@ -19,3 +19,10 @@ let sample =
       {println!("{x}");}
     }
   |}
+open Prettyprint;;
+
+#trace string_of_statement;;
+
+let prog = examples_dict.(9) |> snd |> parse_string;;
+let prog = List.nth prog 0;;
+string_of_statement 0 prog |> print_endline;;

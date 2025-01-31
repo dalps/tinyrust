@@ -34,3 +34,5 @@ let println (st : state) s : unit trace_result =
   in
   State.append_output st (line ^ "\n");
   ok ()
+
+let push_str s1 s2 : string trace_result = String.cat s1 s2 |> Result.ok
