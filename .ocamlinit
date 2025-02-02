@@ -26,3 +26,6 @@ open Prettyprint;;
 let prog = examples_dict.(9) |> snd |> parse_string;;
 let prog = List.nth prog 0;;
 string_of_statement 0 prog |> print_endline;;
+
+let init n = State.state_of_prog asts.(n);;
+let step st p = let p = trace1_expr st p in Result.get_ok p;;

@@ -1,4 +1,5 @@
 open TinyrustLib.Utils
+open TinyrustLib.Parser
 
 let examples_dir = "/home/dalpi/tinyrust/test/examples/"
 
@@ -11,6 +12,9 @@ let examples =
 
 let programs =
   Array.map (read_file % abs_path) examples
+
+let asts =
+  Array.map parse_string programs
 
 let examples_dict =
   Array.map (

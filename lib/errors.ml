@@ -11,6 +11,7 @@ type trace_error =
   | NotInLoop
   | MovedValue of ide
   | SegFault of int
+  | MismatchedArgs of ide
   | TODO
 [@@deriving show]
 

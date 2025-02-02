@@ -24,7 +24,7 @@ let tests : (string * int * string trace_result) array =
     ("12-ownFnError.rs",      25, Error (MovedValue "x"));
     ("13-borrow.rs",          25, Ok "Ciao\nCiao\n");
     ("14-borrowFn.rs",        25, Ok "il parametro prestato: Ciao\nil parametro x: Ciao\n" );
-    ("15-borrowError.rs",     25, Error (DataRace ("x", true, false)));
+    ("15-borrowError.rs",     25, Error (DataRace {borrowed = "x"; is = `mut; want = `imm}));
     ("16-borrowMut.rs",       25, Ok "Ciao, mondo\nCiao, mondo\n");
     ("17-borrowMutError.rs",  40, Error (MutBorrowOfNonMut "x"));
     ("18-loop.rs",            50, Error (OutOfGas 50));
@@ -39,51 +39,42 @@ let tests : (string * int * string trace_result) array =
     ("23-scopeCheck.rs",      25, Error (UnboundVar "y"));
     ("23-scopeCheck.rs",      25, Error (UnboundVar "y"));
     ("23-scopeCheck.rs",      25, Error (UnboundVar "y"));
+    ("23-scopeCheck.rs",      25, Error (UnboundVar "y"));
+    ("23-scopeCheck.rs",      25, Error (UnboundVar "y"));
   |] [@@ocamlformat "disable"]
 
-(* let _ =
-  try
-    Array.iter2
-      (fun (name, prog) (_, gas, exp) ->
-        let prog = Parser.parse_string prog in
-        let out = Trace.trace_prog gas prog in
-        let icon =
-          match (out.result, exp) with
-          | Ok _, Ok _ | Error _, Error _ -> "✔"
-          | Ok _, Error _ | Error _, Ok _ -> "✘"
-        in
-        let ok, error = ("Ok", "Error") in
-        let res_kind, res_output =
-          match out.result with
-          | Ok _ -> (ok, out.state.output)
-          | Error err -> (error, string_of_trace_error err)
-        in
-        let exp_kind, exp_output =
-          match exp with
-          | Ok output -> (ok, output)
-          | Error err -> (error, string_of_trace_error err)
-        in
-        pr "------------------------\n%s %s\n------------------------\n" icon
-          name;
-        List.iter
-          (fun (title, kind, output) ->
-            pr "%-9s %-9s\n%s\n\n" title kind output)
-          [
-            ("Output:", res_kind, res_output);
-            ("Expected:", exp_kind, exp_output);
-          ]
-        (* pr "%s\n" (string_of_traceoutcome out) *))
-      examples_dict tests
-  with _ -> () *)
+let%test "" =
+  let n_examples = Array.length examples_dict in
+  let n_tests = Array.length tests in
+  pr "%d = %d\n" n_examples n_tests;
+  n_examples = n_tests
 
-let%expect_test "test_06" =
-  let _, prog = examples_dict.(5) in
-  parse_string prog
-  |> List.map (string_of_statement 0)
-  |> String.concat "\n" |> pr "%s"
-
-let%expect_test "test_08" =
-  let _, prog = examples_dict.(7) in
-  parse_string prog
-  |> List.map (string_of_statement 0)
-  |> String.concat "\n" |> pr "%s"
+let%expect_test "_" =
+  Array.iter2
+    (fun (name, prog) (_, gas, exp) ->
+      let prog = Parser.parse_string prog in
+      let out = Trace.trace_prog gas prog in
+      let icon =
+        match (out.result, exp) with
+        | Ok _, Ok _ | Error _, Error _ -> "✔"
+        | Ok _, Error _ | Error _, Ok _ -> "✘"
+      in
+      let ok, error = ("Ok", "Error") in
+      let res_kind, res_output =
+        match out.result with
+        | Ok _ -> (ok, out.state.output)
+        | Error err -> (error, string_of_trace_error err)
+      in
+      let exp_kind, exp_output =
+        match exp with
+        | Ok output -> (ok, output)
+        | Error err -> (error, string_of_trace_error err)
+      in
+      pr "------------------------\n%s %s\n------------------------\n" icon name;
+      List.iter
+        (fun (title, kind, output) -> pr "%-9s %-9s\n%s\n\n" title kind output)
+        [
+          ("Output:", res_kind, res_output); ("Expected:", exp_kind, exp_output);
+        ]
+      (* pr "%s\n" (string_of_traceoutcome out) *))
+    examples_dict tests

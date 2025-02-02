@@ -7,7 +7,7 @@ open Errors
 type ide = string [@@deriving show]
 type loc = {
   mut : bool;
-  loc : [ `stack of int | `heap of int ];
+  loc : int;
   borrows : [ `imm of ide list | `mut of ide ];
 }
 [@@deriving show]
@@ -19,15 +19,16 @@ type ty = T_String | T_Ref of bool * ty | T_I32 | T_Bool | T_Unit
 
 type prim = PRINTLN | PUSH_STR [@@deriving show]
 
-type stackval =
+type 'v owned = { value : 'v; owner : ide } [@@deriving show]
+
+type memval =
   | I32 of int
   | Bool of bool
-  | Ref of bool * loc
+  | Ref of loc
   | Unit
   | Str of string
+  | String of string owned
 [@@deriving show]
-
-type 'v owned = { value : 'v; owner : ide }
 
 type envval = Loc of loc | Fn of fn_data | Prim of prim [@@deriving show]
 
@@ -42,47 +43,28 @@ module Env = struct
     | None -> Result.error (UnboundVar ide)
 end
 
-module OwnedLocation = struct
-  type t = { loc : int; owner : ide }
-
-  let compare o1 o2 =
-    let loc_cpm = compare o1.loc o2.loc in
-    if loc_cpm = 0 then compare o1.owner o2.owner else loc_cpm
-  let equal o1 o2 = o1.loc = o2.loc && o1.owner = o2.owner
-  let hash = Hashtbl.hash
-end
-
-module Heap = struct
-  module H = Map.Make (OwnedLocation)
-  include H
-  type heap_value = string
-  type t = heap_value H.t
-
-  let find h loc owner : heap_value trace_result =
-    let key : OwnedLocation.t = { loc; owner } in
-    match find_opt key h with
-    | Some v -> Result.ok v
-    | None -> Result.error (MovedValue owner)
-
-  let drop = H.remove
-end
-
 module Mem = struct
   module M = Map.Make (Int)
   include M
-  type t = stackval M.t
+  type t = memval M.t
 
-  let find m loc : stackval trace_result =
+  let find m loc : memval trace_result =
     find_opt loc m |> Option.to_result ~none:(SegFault loc)
+
+  let move m loc dst =
+    update loc
+      (fun v ->
+        match v with
+        | Some (String data) -> Some (String { data with owner = dst })
+        | v -> v)
+      m
 end
 
 type env = Env.t
 type mem = Mem.t
-type heap = Heap.t
 
 type state = {
   mutable memory     : mem;
-  mutable heap       : heap;
           envstack   : env Stack.t;
           toplevel   : env;
   mutable loop_level : int;
@@ -98,7 +80,6 @@ let init () =
     Env.of_list [ ("println", Prim PRINTLN); ("push_str", Prim PUSH_STR) ]
   in
   let memory = Mem.empty in
-  let heap = Heap.empty in
   let counter = ref 0 in
   let locs () =
     let c = !counter in
@@ -107,15 +88,7 @@ let init () =
   in
   let _f = Seq.(ints 0 |> to_dispenser) in
   Stack.push prelude envstack;
-  {
-    memory;
-    heap;
-    envstack;
-    toplevel = prelude;
-    loop_level = 0;
-    output = "";
-    locs;
-  }
+  { memory; envstack; toplevel = prelude; loop_level = 0; output = ""; locs }
 
 let copy st = { st with envstack = Stack.copy st.envstack }
 let topenv st = Stack.top st.envstack
@@ -156,27 +129,33 @@ let borrow st x bob : loc trace_result =
       error (DataRace { borrowed = x; is = `imm; want = `mut })
   | _ -> error (TypeError "Non-value cannot be referenced")
 
-let borrow_mut st x bob : loc trace_result =
+(** [borrow_mut st src recv] lets [recv] borrow the value of [src] mutably. *)
+let borrow_mut st src recv : memval trace_result =
   let open Result in
   let env = topenv st in
-  let* v = Env.find x env in
+  let* v = Env.find src env in
   match v with
   | Loc ({ borrows = `imm [] } as data) ->
-      let data = { data with borrows = `mut bob } in
-      let* _ = update_topenv st (fun env -> ok (Env.add x (Loc data) env)) in
-      ok data
-  | Loc _ -> error (DataRace { borrowed = x; is = `mut; want = `mut })
+      let data = { data with borrows = `mut recv } in
+      let* _ = update_topenv st (fun env -> ok (Env.add src (Loc data) env)) in
+      ok (Ref data)
+  | Loc _ -> error (DataRace { borrowed = src; is = `mut; want = `mut })
   | _ -> error (TypeError "Non-value cannot be referenced")
 
-let get_var st x : stackval trace_result =
+let deref st (ref : memval) : memval trace_result =
+  let open Result in
+  match ref with
+  | Ref data -> Mem.find st.memory data.loc
+  | _ -> error (TypeError "Can't deref a non-reference")
+
+let get_var st x : memval trace_result =
   let open Result in
   let env = topenv st in
   let* v = Env.find x env in
   match v with
-  | Loc { loc = `heap addr } ->
-      let* value = Heap.find st.heap addr x in
-      ok (Str value)
-  | Loc { loc = `stack addr } -> Mem.find st.memory addr
+  | Loc { loc } ->
+      let* value = Mem.find st.memory loc in
+      ok value
   | _ -> error (TypeError (spr "%s is a function, but I expected a value" x))
 
 let get_fn st x : [ `Fn of fn_data | `Prim of prim ] trace_result =
@@ -193,37 +172,33 @@ let new_var ~(mut : bool) st x init : unit trace_result =
   let loc = st.locs () in
   let* _ =
     update_topenv st (fun env ->
-        let loc =
-          {
-            mut;
-            loc =
-              (match init with
-              | `copy v ->
-                  st.memory <- Mem.add loc v st.memory;
-                  `stack loc
-              | `owned v ->
-                  st.heap <- Heap.add { loc; owner = x } v st.heap;
-                  `heap loc);
-            borrows = `imm [];
-          }
-        in
+        let loc = { mut; loc; borrows = `imm [] } in
+        st.memory <- Mem.add loc.loc init st.memory;
         Result.ok (Env.add x (Loc loc) env))
   in
   ok ()
 
 (* Assignment moves r. Problem: change r's owner, but the owner is associated to locs, not value
+
+   let mut x = String::from("hello")
+   let y = x;  // move
+   x = y       // move back
 *)
-let set_var st l r : unit trace_result =
+let set_var st x (v : memval) : unit trace_result =
   let open Result in
   let env = topenv st in
-  let* res = Env.find l env in
+  let* res = Env.find x env in
   match res with
-  | Loc { mut; loc } ->
-      if mut then (
-        st.memory <- Mem.add loc r st.memory;
-        ok ())
-      else error (CannotMutate l)
-  | _ -> error (TypeError (spr "cannot assign to the function %s" l))
+  | Loc { mut; loc } when mut ->
+      let mem =
+        match v with
+        | String data -> Mem.move st.memory loc x
+        | v -> Mem.add loc v st.memory
+      in
+      st.memory <- mem;
+      ok ()
+  | Loc { mut; loc } when not mut -> error (CannotMutate x)
+  | _ -> error (TypeError (spr "cannot assign to the function %s" x))
 
 let new_fn st name pars body ret =
   update_topenv st (fun env ->

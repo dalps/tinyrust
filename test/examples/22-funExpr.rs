@@ -3,7 +3,7 @@ fn main() {
   {
     fn interna (y: &i32) {
       println!("{y}");
-    }
+    };
     interna(&x);
   };
   interna(&x); // errore: not found in this scope

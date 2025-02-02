@@ -9,19 +9,20 @@ type 'a trace_result = ('a, trace_error) result
 type conf = LoopContinue | Break | Stop | Continue of statement
 [@@deriving variants]
 
-let expr_of_stackval : stackval -> expr = function
+let expr_of_memval : memval -> expr = function
   | I32 i -> CONST i
   | Bool true -> TRUE
   | Bool false -> FALSE
   | Unit -> UNIT
-  | Ref (mut, i) -> REF { mut; e = CONST i }
-  | StringSlice s -> STRING s
+  | Ref data -> REF { mut = data.mut; e = CONST data.loc }
+  | Str s -> STRING s
+  | String data -> STRING data.value
 
-let stackval_of_expr : expr -> stackval trace_result =
+let memval_of_expr : expr -> memval trace_result =
   let open Types.Result in
   function
   | CONST n -> ok (I32 n)
-  | STRING s -> ok (StringSlice s)
+  | STRING s -> ok (Str s)
   | UNIT -> ok Unit
   | _ -> error (TypeError "Not a value")
 
@@ -48,12 +49,12 @@ let rec trace1_expr st (e : expr) : expr trace_result =
   | TRUE | FALSE | UNIT | CONST _ | STRING _ -> return e
   | VAR x ->
       let* res = State.get_var st x in
-      expr_of_stackval res |> return
+      expr_of_memval res |> return
   | ARITH2 (op, e1, e2) -> arith2 op <$> trace1_expr st e1 <*> trace1_expr st e2
   | ASSIGN (x, e) ->
       let& e' = (assign x, trace1_expr st e) in
-      let* v = stackval_of_expr e' in
-      let* _ = State.update_var st x v in
+      let* v = memval_of_expr e' in
+      let* _ = State.set_var st x v in
       return UNIT
   | BLOCK (s, e) ->
       State.new_block_env st;
@@ -108,24 +109,27 @@ and trace1_args st (f : ide) (vals : expr list) (args : expr list) :
 
 and call_fun st (f : ide) (args : expr list) : expr trace_result =
   let open Types.Result in
-  match State.get_fn st f with
-  | Ok (`Fn { pars; body; ret }) ->
+  match (State.get_fn st f, args) with
+  | Ok (`Fn { pars; body; ret }), _ ->
       State.new_fn_env st;
       let* _ =
-        List.fold_left2
-          (fun _ par arg ->
-            let* v = stackval_of_expr arg in
-            State.new_var ~mut:false st par v)
-          (ok ()) pars args
+        try
+          List.fold_left2
+            (fun _ par arg ->
+              let* v = memval_of_expr arg in
+              State.new_var ~mut:false st par v)
+            (ok ()) pars args
+        with _ -> error (MismatchedArgs f)
       in
       return (BLOCK_EXEC (body, ret))
-  | Ok (`Prim prim) -> (
-      match args with
-      | [ STRING s ] ->
-          let* _ = Prim.println st s in
-          ok UNIT
-      | _ -> ok UNIT)
-  | Error err -> Error err
+  | Ok (`Prim PRINTLN), [ STRING s ] ->
+      let* _ = Prim.println st s in
+      ok UNIT
+  | Ok (`Prim PUSH_STR), [ VAR x; STRING s2 ] ->
+      let* s = Prim.push_str st x s2 in
+      ok UNIT
+  | Ok (`Prim _), _ -> error (MismatchedArgs f)
+  | Error err, _ -> error err
 
 and trace1_statement st (t : statement) : conf trace_result =
   let open Types.Result in
@@ -135,7 +139,7 @@ and trace1_statement st (t : statement) : conf trace_result =
       let& v =
         (continue % let_stmt data.name data.mut, trace1_expr st data.body)
       in
-      let* v = stackval_of_expr v in
+      let* v = memval_of_expr v in
       let* _ = State.new_var st data.name v ~mut:data.mut in
       return stop
   | FUNDECL data ->
@@ -158,6 +162,8 @@ type trace_outcome = {
   state : state;
 }
 
+let entry_point = CALL ("main", [])
+
 let trace_prog (n_steps : int) (prog : statement list) : trace_outcome =
   let open Types.Result in
   let st = State.state_of_prog prog in
@@ -170,6 +176,5 @@ let trace_prog (n_steps : int) (prog : statement list) : trace_outcome =
       | err -> (acc, err)
     else (acc, error (OutOfGas n_steps))
   in
-  let entry_point = CALL ("main", []) in
   let lst, result = go 0 [] entry_point in
   { state = st; trace = List.rev lst; result }

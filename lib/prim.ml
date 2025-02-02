@@ -6,8 +6,9 @@ let string_of_stackval = function
   | I32 i -> string_of_int i
   | Unit -> "()"
   | Bool b -> string_of_bool b
-  | StringSlice s -> s
-  | Ref (_, i) -> spr "ref: %d" i
+  | Str s -> s
+  | String data -> data.value
+  | Ref data -> spr "&%s(%d)" (if data.mut then "mut " else "") data.loc
 
 let println (st : state) s : unit trace_result =
   let open Types.Result in
@@ -35,4 +36,10 @@ let println (st : state) s : unit trace_result =
   State.append_output st (line ^ "\n");
   ok ()
 
-let push_str s1 s2 : string trace_result = String.cat s1 s2 |> Result.ok
+let push_str st x str : unit trace_result =
+  let open Types.Result in
+  let* ref = borrow_mut st x "push_str" in
+  let* v = deref st ref in
+  match v with
+  | String s1 -> State.set_var st x (String { s1 with value = s1.value ^ str })
+  | _ -> error (TypeError "push_str")

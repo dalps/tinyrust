@@ -78,13 +78,6 @@ let rec string_of_expr indent (expr : Ast.expr) : string =
   | _ -> "?"
 
 and string_of_statement indent (stmt : Ast.statement) =
-  pr "Tabs: %-4d %-8s\n" indent
-    (match stmt with
-    | FUNDECL _ -> "fn"
-    | LET _ -> "let"
-    | SEQ (_, _) -> "seq"
-    | EXPR _ -> "expr"
-    | EMPTY -> "empty");
   match stmt with
   | FUNDECL data ->
       spr "%s%s %s(%s) {\n%s\n%s}" (tabs indent) (keyword "fn") data.name
@@ -106,42 +99,49 @@ and string_of_statement indent (stmt : Ast.statement) =
   | EXPR e -> spr "%s%s;" (tabs indent) (string_of_expr indent e)
   | EMPTY -> spr "%s" (tabs indent)
 
-let string_of_stackval = function
+let string_of_memval = function
   | I32 i -> string_of_int i
   | Unit -> "()"
   | Bool b -> string_of_bool b
-  | StringSlice s -> spr "\"foo%s\"" s
-  | Ref (_, i) -> spr "ref: %d" i
+  | Str s -> spr "\"%s\"" s
+  | Ref data -> spr "&(%d)" data.loc
+  | String data -> spr "\"%s\"" data.value
+
+let string_of_prim = function
+  | PRINTLN -> "println"
+  | PUSH_STR -> "push_str"
 
 let string_of_envval = function
-  | HeapVal loc -> spr "%s" (string_of_int loc)
-  | StackVal { mut; value } ->
-      spr "%s%s" (if mut then "mut " else "") (string_of_stackval value)
+  | Loc data -> spr "%s%d" (if data.mut then "mut " else "") data.loc
   | Fn _ -> "<fn>"
   | Prim _ -> "<prim>"
 
 let string_of_env env =
-  Env.fold (fun k v acc -> spr "%s->%s" k (string_of_envval v) :: acc) env []
+  Env.fold (fun k v acc -> spr "%s/%s" k (string_of_envval v) :: acc) env []
   |> String.concat ", "
 
 let string_of_envstack envstack =
-  Stack.fold (fun acc env -> spr "[%s]" (string_of_env env) :: acc) [] envstack
+  Stack.fold
+    (fun acc env -> spr "[ %s ]" (string_of_env env) :: acc)
+    [] envstack
   |> String.concat "\n"
 
-let string_of_ownedlocation (o : OwnedLocation.t) = spr "%d@%s" o.loc o.owner
-
 let string_of_memory h =
-  Heap.fold
-    (fun k v acc -> spr "%s->%s" (string_of_ownedlocation k) v :: acc)
-    h []
-  |> String.concat ", "
+  spr "{ %s }"
+    (Mem.fold (fun k v acc -> spr "%d/%s" k (string_of_memval v) :: acc) h []
+    |> String.concat ", ")
 
 let string_of_state st =
-  spr "%s\n%s\n%s\n%s\n"
-    ANSITerminal.(sprintf [ blue; Bold ] "Memory:")
-    (string_of_memory st.memory)
+  spr "%s%s\n%s\n\n%s\n%s\n"
+    (if st.loop_level <> 0 then
+       spr "%s%d\n"
+         ANSITerminal.(sprintf [ blue; Bold ] "Loop level: ")
+         (st.loop_level)
+     else "")
     ANSITerminal.(sprintf [ blue; Bold ] "Envstack:")
     (string_of_envstack st.envstack)
+    ANSITerminal.(sprintf [ blue; Bold ] "Memory:")
+    (string_of_memory st.memory)
 
 let string_of_traceoutcome (d : trace_outcome) =
   List.mapi
@@ -166,8 +166,13 @@ let string_of_trace_error = function
         "[MutBorrowOfNonMut] cannot borrow %s as mutable, as it is not \
          declared as mutable"
         x
-  | DataRace (x, mut1, mut2) ->
-      let format_mut m = if m then "mutable" else "immutable" in
+  | DataRace data ->
+      let format_mut = function
+        | `mut -> "mutable"
+        | `imm -> "immutable"
+      in
       spr "[DataRace] cannot borrow %s as %s because it is also borrowed as %s"
-        x (format_mut mut1) (format_mut mut2)
+        data.borrowed (format_mut data.is) (format_mut data.want)
+  | SegFault loc -> spr "[SegFault] Illegal access at %d" loc
+  | MismatchedArgs ide -> spr "[MismatchedArgs] %s" ide
   | TODO -> "[TODO]"

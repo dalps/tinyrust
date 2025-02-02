@@ -62,7 +62,7 @@ let arith2 op e1 e2 =
   | _ -> ARITH2 (op, e1, e2)
 
 let is_value = function
-  | TRUE | FALSE | CONST _ | STRING _ | UNIT -> true
+  | TRUE | FALSE | CONST _ | STRING _ | UNIT | BREAK -> true
   | _ -> false
 
 let remove_block = function
