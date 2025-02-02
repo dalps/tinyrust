@@ -75,7 +75,7 @@ let rec string_of_expr indent (expr : Ast.expr) : string =
         (if e.mut then keyword "mut " else "")
         (string_of_expr indent e.e)
   | BREAK -> keyword "break"
-  | _ -> "?"
+  | CONTINUE -> keyword "continue"
 
 and string_of_statement indent (stmt : Ast.statement) =
   match stmt with
@@ -136,7 +136,7 @@ let string_of_state st =
     (if st.loop_level <> 0 then
        spr "%s%d\n"
          ANSITerminal.(sprintf [ blue; Bold ] "Loop level: ")
-         (st.loop_level)
+         st.loop_level
      else "")
     ANSITerminal.(sprintf [ blue; Bold ] "Envstack:")
     (string_of_envstack st.envstack)

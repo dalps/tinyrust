@@ -20,7 +20,7 @@ type expr =
   | LOOP_EXEC of { curr : statement; orig : statement }
   | REF of { mut : bool; e : expr }
   | BREAK
-  | BORROW of expr
+  | CONTINUE
 [@@deriving show]
 
 and statement =

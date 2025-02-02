@@ -29,7 +29,7 @@ let tests : (string * int * string trace_result) array =
     ("17-borrowMutError.rs",  40, Error (MutBorrowOfNonMut "x"));
     ("18-loop.rs",            50, Error (OutOfGas 50));
     ("19-loopBreak.rs",       50, Ok "3\n2\n1\n0\n");
-    ("20-loopNested.rs",      50, Ok "0,0\n0,1\n1,0\n1,1\n2,0\n2,1\n");
+    ("20-loopNested.rs",      100, Ok "0,0\n0,1\n1,0\n1,1\n2,0\n2,1\n");
     ("21-exprBlock.rs",       25, Ok "7\n");
     ("22-funExpr.rs",         25, Error (UnboundVar "interna"));
     ("23-scopeCheck.rs",      25, Error (UnboundVar "y"));

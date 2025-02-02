@@ -60,12 +60,17 @@ let rec trace1_expr st (e : expr) : expr trace_result =
       State.new_block_env st;
       return (BLOCK_EXEC (s, e))
   | BLOCK_EXEC (s, e) -> (
-      let$ _ = ((fun s' -> block_exec s' e), trace1_statement st s) in
-      match e with
-      | None ->
-          State.dropenv st;
-          return UNIT
-      | Some e -> return (BLOCK_RET e))
+      let* c = trace1_statement st s in
+      match c with
+      | Break -> return BREAK
+      | LoopContinue -> return CONTINUE
+      | Stop -> (
+          match e with
+          | None ->
+              State.dropenv st;
+              return UNIT
+          | Some e -> return (BLOCK_RET e))
+      | Continue s' -> return (BLOCK_EXEC (s', e)))
   | BLOCK_RET e ->
       let& v = (block_ret, trace1_expr st e) in
       State.dropenv st;
@@ -87,14 +92,16 @@ let rec trace1_expr st (e : expr) : expr trace_result =
       State.enter_loop st;
       return (loop_exec s s)
   | LOOP_EXEC e -> (
-      let$ b = (loop_exec e.orig, trace1_statement st e.curr) in
-      match b with
-      | `Break ->
+      let* c = trace1_statement st e.curr in
+      match c with
+      | Break ->
           let* _ = State.exit_loop st in
           State.dropenv st;
           return UNIT
-      | _ -> return (loop_exec e.orig e.orig))
+      | Stop | LoopContinue -> return (loop_exec e.orig e.orig)
+      | Continue s' -> return (LOOP_EXEC { e with curr = s' }))
   | BREAK -> return BREAK
+  | CONTINUE -> return CONTINUE
   | _ -> error TODO
 
 and trace1_args st (f : ide) (vals : expr list) (args : expr list) :
@@ -146,9 +153,10 @@ and trace1_statement st (t : statement) : conf trace_result =
       let* _ = State.new_fn st data.name data.pars data.body data.ret in
       return stop
   | EXPR e -> (
-      let& v = (continue % expr, trace1_expr st e) in
-      match v with
+      let& b = (continue % expr, trace1_expr st e) in
+      match b with
       | BREAK -> return Break
+      | CONTINUE -> return LoopContinue
       | _ -> return stop)
   | SEQ (s1, s2) ->
       let$ _ = ((continue % fun s1' -> seq s1' s2), trace1_statement st s1) in

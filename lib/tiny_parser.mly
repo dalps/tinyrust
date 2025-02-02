@@ -15,6 +15,7 @@
   ELSE          "else"
   LOOP          "loop"
   BREAK         "break"
+  CONTINUE      "continue"
   TRUE          "true"
   FALSE         "false"
   TY_I32        "i32"
@@ -87,6 +88,7 @@ expr:
   | "true" { TRUE }
   | "false" { FALSE }
   | "break" { BREAK }
+  | "continue" { CONTINUE }
   | n = CONST { CONST (int_of_string n) }
   | s = STRING { STRING (s |> String.split_on_char '\"' |> fun s -> List.nth s 1 ) }
   | x = ID { VAR x }
