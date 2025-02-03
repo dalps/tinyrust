@@ -1,18 +1,19 @@
 # Tiny Rust
 
-Make a local copy of this repository and initialize it:
-```
-dune init proj tinyrust
-```
+Install the dependencies:
 
-Install the required packages:
 ```sh
-opam install . --deps-only # install dependencies
+opam install menhir ppx_jane ANSITerminal minttea nice_parser re
 ```
 
-Then build:
+Or alternatively:
+
 ```sh
-dune build
+opam install . --deps-only
 ```
 
-Only smallstep.
+Run the frontend with the syntax `dune exec tinyrust <max_steps> <program>`. For example:
+
+```sh
+dune exec tinyrust 100 test/examples/01-print.rs
+```

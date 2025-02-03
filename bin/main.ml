@@ -19,8 +19,7 @@ let init _model = Command.Noop
 let update event (model : model) =
   match event with
   | Event.KeyDown (Key "q" | Escape) -> (model, Command.Quit)
-  | Event.KeyDown (Key "g") ->
-      ({ model with current_step = 0 }, Command.Noop)
+  | Event.KeyDown (Key "g") -> ({ model with current_step = 0 }, Command.Noop)
   | Event.KeyDown (Key "h") ->
       ({ model with current_step = model.max_steps }, Command.Noop)
   | Event.KeyDown (Key "j" | Down) ->
@@ -45,7 +44,7 @@ let view model =
         (if model.current_step > 0 then ", k/↑: previous step" else ""))
   in
   if model.current_step = 0 then
-    spr "%s%s\n%s"
+    spr "%s%s\n\n%s"
       ANSITerminal.(sprintf [ yellow ] "\n--- Source code ---\n\n")
       model.program usage
   else
@@ -59,8 +58,10 @@ let view model =
 
 %s
 
-%s%s%s
+%s%s
 
+%s
+%s
 %s
 |}
       ANSITerminal.(sprintf [ red ] "--- Step %-2d ---" model.current_step)
@@ -70,10 +71,9 @@ let view model =
       (if model.current_step = model.max_steps then
          spr "\n\n%s" (string_of_trace_result model.trace_outcome.result)
        else "")
+      ANSITerminal.(sprintf [ yellow; Bold ] "Output:")
       (if snapshot.state.output <> "" then
-         spr "\n\n%s\n%s"
-           ANSITerminal.(sprintf [ yellow; Bold ] "Output:")
-           snapshot.state.output
+         spr "%s" snapshot.state.output
        else "")
       usage
 
