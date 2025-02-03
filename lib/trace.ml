@@ -9,21 +9,28 @@ type 'a trace_result = ('a, trace_error) result
 type conf = LoopContinue | Break | Stop | Continue of statement
 [@@deriving variants]
 
-let expr_of_memval : memval -> expr = function
-  | I32 i -> CONST i
-  | Bool true -> TRUE
-  | Bool false -> FALSE
-  | Unit -> UNIT
-  | Ref data -> REF { mut = data.mut; e = CONST data.loc }
-  | Str s -> STRING s
-  | String data -> STRING data.value
+let expr_of_memval : memval -> expr trace_result =
+  let open Result in
+  function
+  | I32 i -> CONST i |> ok
+  | Bool true -> TRUE |> ok
+  | Bool false -> FALSE |> ok
+  | Unit -> UNIT |> ok
+  | Ref data -> REF { mut = data.mut; e = CONST data.loc } |> ok
+  | Str s -> STR s |> ok
+  | String data -> STRING data |> ok
+  | Moved x -> error (MovedValue x)
 
-let memval_of_expr : expr -> memval trace_result =
+let memval_of_expr st : expr -> memval trace_result =
   let open Types.Result in
   function
   | CONST n -> ok (I32 n)
-  | STRING s -> ok (Str s)
+  | STR value -> ok (String { value; owner = "" })
+  | STRING data -> ok (String data)
   | UNIT -> ok Unit
+  | BORROW loc ->
+      let* v = deref st (Ref loc) in
+      ok v
   | _ -> error (TypeError "Not a value")
 
 let ( let& )
@@ -49,10 +56,11 @@ let ( let$ ) ((wrapper, s) : (statement -> 'term) * conf trace_result)
 let rec trace1_expr st (e : expr) : expr trace_result =
   let open Types.Result in
   match e with
-  | TRUE | FALSE | UNIT | CONST _ | STRING _ | BREAK | CONTINUE -> return e
+  | e when is_value e -> return e
   | VAR x ->
       let* res = State.get_var st x in
-      expr_of_memval res |> return
+      let* v = expr_of_memval res in
+      return v
   | ARITH2 (op, e1, e2) -> (
       match (e1, e2) with
       | CONST n1, CONST n2 -> return (apply_binop op n1 n2)
@@ -64,7 +72,7 @@ let rec trace1_expr st (e : expr) : expr trace_result =
           return (ARITH2 (op, e1', e2)))
   | ASSIGN (x, e) ->
       let& e' = (trace1_expr st, assign x, e) in
-      let* v = memval_of_expr e' in
+      let* v = memval_of_expr st e' in
       let* _ = State.set_var st x v in
       return UNIT
   | BLOCK (s, e) ->
@@ -86,9 +94,7 @@ let rec trace1_expr st (e : expr) : expr trace_result =
       let& v = (trace1_expr st, block_ret, e) in
       State.dropenv st;
       return v
-  | CALL (f, args) ->
-      pr "calling %s with %d args\n" f (List.length args);
-      trace1_args st f [] args
+  | CALL (f, args) -> trace1_args st f [] args
   | IFE (e0, e1, e2) -> (
       let& v = (trace1_expr st, (fun e0' -> ife e0' e1 e2), e0) in
       match v with
@@ -118,17 +124,10 @@ let rec trace1_expr st (e : expr) : expr trace_result =
           return UNIT
       | Stop | LoopContinue -> return (loop_exec e.orig e.orig)
       | Continue s' -> return (LOOP_EXEC { e with curr = s' }))
-  | REF { mut; e } ->
-      let* e = trace1_expr st e in
-      let _ =
-        match e with
-        | VAR x ->
-            let* _ = if mut then borrow_mut st x else borrow st x in
-            return ()
-        | _ -> return ()
-      in
-      return (REF { mut; e })
-  | _ -> error TODO
+  | REF { mut; e = VAR x } ->
+      let* loc = if mut then borrow_mut st x else borrow st x in
+      return (BORROW loc)
+  | _ -> error NoRuleApplies
 
 and trace1_args st (f : ide) (vals : expr list) (args : expr list) :
     expr trace_result =
@@ -146,21 +145,19 @@ and call_fun st (f : ide) (args : expr list) : expr trace_result =
   | Ok (`Fn { pars; body; ret }), _ ->
       State.new_fn_env st;
       let* _ =
-        pr "Call parameters: want: %d, got: %d\n" (List.length pars)
-          (List.length args);
         try
           List.fold_left2
             (fun _ par arg ->
-              let* v = memval_of_expr arg in
+              let* v = memval_of_expr st arg in
               State.new_var ~mut:false st par v)
             (ok ()) pars args
         with _ -> error (MismatchedArgs f)
       in
       return (BLOCK_EXEC (body, ret))
-  | Ok (`Prim PRINTLN), [ STRING s ] ->
+  | Ok (`Prim PRINTLN), [ STR s ] ->
       let* _ = Prim.println st s in
       ok UNIT
-  | Ok (`Prim PUSH_STR), [ VAR x; STRING s2 ] ->
+  | Ok (`Prim PUSH_STR), [ VAR x; STR s2 ] ->
       let* s = Prim.push_str st x s2 in
       ok UNIT
   | Ok (`Prim _), _ -> error (MismatchedArgs f)
@@ -174,7 +171,7 @@ and trace1_statement st (t : statement) : conf trace_result =
       let& v =
         (trace1_expr st, continue % let_stmt data.name data.mut, data.body)
       in
-      let* v = memval_of_expr data.body in
+      let* v = memval_of_expr st data.body in
       let* _ = State.new_var st data.name v ~mut:data.mut in
       return stop
   | FUNDECL data ->
@@ -208,9 +205,9 @@ let trace_prog (n_steps : int) (prog : statement list) : trace_outcome =
       match trace1_expr st expr with
       | Ok e' ->
           if is_value e' then (acc, ok e')
-          else go (i + 1) ({ expr; state = State.copy st } :: acc) e'
+          else go (i + 1) ({ expr = e'; state = State.copy st } :: acc) e'
       | err -> (acc, err)
     else (acc, error (OutOfGas n_steps))
   in
-  let lst, result = go 0 [] entry_point in
+  let lst, result = go 0 [ { expr = entry_point; state = State.copy st } ] entry_point in
   { state = st; trace = List.rev lst; result }

@@ -30,7 +30,8 @@ let rec string_of_expr indent (expr : Ast.expr) : string =
   | FALSE -> "false" |> value
   | VAR x -> string_of_var x
   | CONST n -> string_of_int n |> value
-  | STRING s -> spr "\"%s\"" s |> value
+  | STR s -> spr "\"%s\"" s |> value
+  | STRING data -> spr "String::from(\"%s\")" data.value |> value
   | ARITH2 (op, e1, e2) ->
       spr "%s %s %s" (string_of_expr indent e1) (string_of_binop op)
         (string_of_expr indent e2)
@@ -79,19 +80,24 @@ let rec string_of_expr indent (expr : Ast.expr) : string =
       spr "&%s%s"
         (if e.mut then keyword "mut " else "")
         (string_of_expr indent e.e)
+  | BORROW loc ->
+      spr "&%s%s"
+        (if loc.mut then keyword "mut " else "")
+        ANSITerminal.(sprintf [ cyan ] "%d" loc.loc)
   | BREAK -> keyword "break"
   | CONTINUE -> keyword "continue"
 
 and string_of_statement indent (stmt : Ast.statement) =
   match stmt with
   | FUNDECL data ->
-      spr "%s%s %s(%s) {\n%s\n%s}" (tabs indent) (keyword "fn") data.name
+      spr "%s%s %s(%s) {\n%s\n%s%s}" (tabs indent) (keyword "fn") data.name
         (String.concat ", " data.pars)
         (string_of_statement (indent + 1) data.body)
         (Option.fold ~none:""
            ~some:(fun e ->
              spr "%s%s\n" (tabs (indent + 1)) (string_of_expr (indent + 1) e))
            data.ret)
+        (tabs indent)
   | LET data ->
       spr "%s%s %s%s = %s;" (tabs indent) (keyword "let")
         (if data.mut then "mut " else "")
@@ -110,7 +116,9 @@ let string_of_memval = function
   | Bool b -> string_of_bool b
   | Str s -> spr "\"%s\"" s
   | Ref data -> spr "&(%d)" data.loc
-  | String data -> spr "\"%s\"" data.value
+  | String data ->
+      spr "String { data: \"%s\"; owner: %s }" data.value data.owner
+  | Moved x -> ANSITerminal.(sprintf [ red ] "moved")
 
 let string_of_prim = function
   | PRINTLN -> "println"
@@ -118,9 +126,20 @@ let string_of_prim = function
 
 let string_of_envval = function
   | Loc data ->
-      spr "%s%s"
+      spr "%s%s%s"
         (if data.mut then "mut " else "")
         ANSITerminal.(sprintf [ cyan ] "%d" data.loc)
+        ANSITerminal.(
+          if data.borrows = `imm [] then ""
+          else
+            sprintf [ yellow ] " borrowed by: "
+            ^
+            match data.borrows with
+            | `imm [] -> ""
+            | `mut x -> sprintf [ yellow ] "&mut %s" x
+            | `imm l ->
+                sprintf [ yellow ] "%s"
+                  (List.map (fun s -> spr "&%s" s) l |> String.concat ", "))
   | Fn _ -> "<fn>"
   | Prim _ -> "<prim>"
 
@@ -176,6 +195,9 @@ let string_of_trace_error = function
         data.borrowed (format_mut data.is) (format_mut data.want)
   | SegFault loc -> spr "[SegFault] Illegal access at %d" loc
   | MismatchedArgs ide -> spr "[MismatchedArgs] %s" ide
+  | NoRuleApplies -> "[NoRuleApplies]"
+  | CannotAssignBorrowed x ->
+      spr "[CannotAssignBorrowed] cannot assign to %s because it is borrowed" x
   | TODO -> "[TODO]"
 
 let string_of_traceoutcome (out : trace_outcome) =
@@ -205,3 +227,8 @@ let string_of_traceoutcome (out : trace_outcome) =
        spr "%s\n%s"
          ANSITerminal.(sprintf [ yellow; Bold ] "Output:")
          out.state.output)
+
+let pp_memory f st = Format.(fprintf f "%s" (string_of_memory st))
+let pp_env f st = Format.(fprintf f "%s" (string_of_env st))
+let pp_envstack f st = Format.(fprintf f "%s" (string_of_envstack st))
+let pp_state f st = Format.(fprintf f "%s" (string_of_state st))

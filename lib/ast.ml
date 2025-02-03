@@ -1,5 +1,14 @@
 type ide = string [@@deriving show]
 
+type loc = {
+  mut : bool;
+  loc : int;
+  borrows : [ `imm of ide list | `mut of ide ];
+}
+[@@deriving show]
+
+type 'v owned = { value : 'v; owner : ide } [@@deriving show]
+
 type binop = ADD | MUL | SUB | MOD | DIV | EQ | LEQ [@@deriving show]
 
 type expr =
@@ -8,7 +17,8 @@ type expr =
   | FALSE
   | VAR of ide
   | CONST of int
-  | STRING of string
+  | STR of string
+  | STRING of string owned
   | ARITH2 of binop * expr * expr
   | ASSIGN of ide * expr
   | BLOCK of statement * expr option
@@ -19,6 +29,7 @@ type expr =
   | LOOP of expr
   | LOOP_EXEC of { curr : statement; orig : statement }
   | REF of { mut : bool; e : expr }
+  | BORROW of loc
   | BREAK
   | CONTINUE
 [@@deriving show]
@@ -62,7 +73,8 @@ let arith2 op e1 e2 =
   | _ -> ARITH2 (op, e1, e2)
 
 let is_value = function
-  | TRUE | FALSE | CONST _ | STRING _ | UNIT | BREAK -> true
+  | TRUE | FALSE | CONST _ | STR _ | STRING _ | UNIT | BREAK | CONTINUE | BORROW _ ->
+      true
   | _ -> false
 
 let remove_block = function

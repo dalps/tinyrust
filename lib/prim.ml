@@ -2,13 +2,14 @@ open State
 open Utils
 open Errors
 
-let string_of_stackval = function
+let string_of_memval = function
   | I32 i -> string_of_int i
   | Unit -> "()"
   | Bool b -> string_of_bool b
   | Str s -> s
   | String data -> data.value
   | Ref data -> spr "&%s(%d)" (if data.mut then "mut " else "") data.loc
+  | Moved _ -> spr "(moved)"
 
 let println (st : state) s : unit trace_result =
   let open Types.Result in
@@ -27,8 +28,9 @@ let println (st : state) s : unit trace_result =
              | `Text s -> ok s
              | `Delim groups ->
                  let var = Group.get groups 1 in
-                 let* v = State.get_var st var in
-                 ok (string_of_stackval v)
+                 let* r = borrow ~recv:"println" st var in
+                 let* v = deref st (Ref r) in
+                 ok (string_of_memval v)
            in
            ok (acc ^ next))
          (ok "")
@@ -39,7 +41,7 @@ let println (st : state) s : unit trace_result =
 let push_str st x str : unit trace_result =
   let open Types.Result in
   let* ref = borrow_mut st x ~recv:"push_str" in
-  let* v = deref st ref in
+  let* v = deref st (Ref ref) in
   match v with
   | String s1 -> State.set_var st x (String { s1 with value = s1.value ^ str })
   | _ -> error (TypeError "push_str")

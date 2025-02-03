@@ -12,6 +12,8 @@ type trace_error =
   | MovedValue of ide
   | SegFault of int
   | MismatchedArgs of ide
+  | CannotAssignBorrowed of ide
+  | NoRuleApplies
   | TODO
 [@@deriving show]
 

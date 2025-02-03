@@ -90,7 +90,7 @@ expr:
   | "break" { BREAK }
   | "continue" { CONTINUE }
   | n = CONST { CONST (int_of_string n) }
-  | s = STRING { STRING (s |> String.split_on_char '\"' |> fun s -> List.nth s 1 ) }
+  | s = STRING { STR (s |> String.split_on_char '\"' |> fun s -> List.nth s 1 ) }
   | x = ID { VAR x }
   | e1 = expr op = binop e2 = expr { ARITH2 (op, e1, e2) }
   | x = ID "=" e = expr { ASSIGN (x,e) }

@@ -4,13 +4,7 @@ open Utils
 open Errors
 
 (* Should the borrow type be carried by the environment or by the reference? *)
-type ide = string [@@deriving show]
-type loc = {
-  mut : bool;
-  loc : int;
-  borrows : [ `imm of ide list | `mut of ide ];
-}
-[@@deriving show]
+
 type fn_data = { pars : ide list; body : statement; ret : expr option }
 [@@deriving show]
 
@@ -19,8 +13,6 @@ type ty = T_String | T_Ref of bool * ty | T_I32 | T_Bool | T_Unit
 
 type prim = PRINTLN | PUSH_STR [@@deriving show]
 
-type 'v owned = { value : 'v; owner : ide } [@@deriving show]
-
 type memval =
   | I32 of int
   | Bool of bool
@@ -28,6 +20,7 @@ type memval =
   | Unit
   | Str of string
   | String of string owned
+  | Moved of ide
 [@@deriving show]
 
 type envval = Loc of loc | Fn of fn_data | Prim of prim [@@deriving show]
@@ -49,13 +42,17 @@ module Mem = struct
   type t = memval M.t
 
   let find m loc : memval trace_result =
-    find_opt loc m |> Option.to_result ~none:(SegFault loc)
+    let open Result in
+    match M.find_opt loc m with
+    | None -> error (SegFault loc)
+    | Some (Moved x) -> error (MovedValue x)
+    | Some v -> ok v
 
-  let move m loc dst =
+  let move m loc from =
     update loc
       (fun v ->
         match v with
-        | Some (String data) -> Some (String { data with owner = dst })
+        | Some (String _) -> Some (Moved from)
         | v -> v)
       m
 end
@@ -93,9 +90,7 @@ let init () =
 let copy st = { st with envstack = Stack.copy st.envstack }
 let topenv st = Stack.top st.envstack
 let popenv st = Stack.pop st.envstack
-let dropenv st =
-
-  Stack.drop st.envstack
+let dropenv st = Stack.drop st.envstack
 let pushenv st env = Stack.push env st.envstack
 let update_topenv st (update : env -> env trace_result) : unit trace_result =
   let open Types.Result in
@@ -118,21 +113,21 @@ let exit_loop st =
     ok ())
   else error NotInLoop
 
-let borrow st ?(recv = "anon") src : memval trace_result =
+let borrow st ?(recv = "anon") src : loc trace_result =
   let open Result in
   let env = topenv st in
   let* v = Env.find src env in
   match v with
   | Loc ({ borrows = `imm xs } as data) ->
-      let data = { data with borrows = `imm (recv :: xs); mut = false } in
+      let data = { data with borrows = `imm (recv :: xs) } in
       let* _ = update_topenv st (fun env -> ok (Env.add src (Loc data) env)) in
-      ok (Ref data)
+      ok data
   | Loc { borrows = `mut _ } ->
       error (DataRace { borrowed = src; is = `imm; want = `mut })
   | _ -> error (TypeError "Non-value cannot be referenced")
 
 (** [borrow_mut st src recv] lets [recv] borrow the value of [src] mutably. *)
-let borrow_mut st ?(recv = "anon") src : memval trace_result =
+let borrow_mut st ?(recv = "anon") src : loc trace_result =
   let open Result in
   let env = topenv st in
   let* v = Env.find src env in
@@ -140,7 +135,7 @@ let borrow_mut st ?(recv = "anon") src : memval trace_result =
   | Loc ({ borrows = `imm [] } as data) ->
       let data = { data with borrows = `mut recv; mut = true } in
       let* _ = update_topenv st (fun env -> ok (Env.add src (Loc data) env)) in
-      ok (Ref data)
+      ok data
   | Loc _ -> error (DataRace { borrowed = src; is = `mut; want = `mut })
   | _ -> error (TypeError "Non-value cannot be referenced")
 
@@ -155,9 +150,11 @@ let get_var st x : memval trace_result =
   let env = topenv st in
   let* v = Env.find x env in
   match v with
-  | Loc { loc } ->
+  | Loc { loc } -> (
       let* value = Mem.find st.memory loc in
-      ok value
+      match value with
+      | Moved _ -> error (MovedValue x)
+      | _ -> ok value)
   | _ -> error (TypeError (spr "%s is a function, but I expected a value" x))
 
 let get_fn st x : [ `Fn of fn_data | `Prim of prim ] trace_result =
@@ -171,14 +168,27 @@ let get_fn st x : [ `Fn of fn_data | `Prim of prim ] trace_result =
 
 let new_var ~(mut : bool) st x init : unit trace_result =
   let open Result in
-  let loc = st.locs () in
-  let* _ =
-    update_topenv st (fun env ->
-        let loc = { mut; loc; borrows = `imm [] } in
-        st.memory <- Mem.add loc.loc init st.memory;
-        Result.ok (Env.add x (Loc loc) env))
-  in
-  ok ()
+  let fresh_loc = { mut; loc = st.locs (); borrows = `imm [] } in
+  update_topenv st (fun env ->
+      let* mem =
+        match init with
+        | String data -> (
+            let new_init = String { data with owner = x } in
+            if data.owner = "" then
+              ok (Mem.add fresh_loc.loc new_init st.memory)
+            else
+              (* find the previous owner *)
+              let* v = Env.find data.owner env in
+              match v with
+              | Loc loc ->
+                  let mem = Mem.move st.memory loc.loc data.owner in
+                  let mem = Mem.add fresh_loc.loc new_init mem in
+                  ok mem
+              | _ -> ok st.memory)
+        | _ -> ok (Mem.add fresh_loc.loc init st.memory)
+      in
+      st.memory <- mem;
+      ok (Env.add x (Loc fresh_loc) env))
 
 (* Assignment moves r. Problem: change r's owner, but the owner is associated to locs, not value
 
@@ -191,7 +201,10 @@ let set_var st x (v : memval) : unit trace_result =
   let env = topenv st in
   let* res = Env.find x env in
   match res with
-  | Loc { mut; loc } when mut ->
+  | Loc { mut = false } -> error (CannotMutate x)
+  | Loc { borrows = `imm (_ :: _) | `mut _ } ->
+      error (CannotAssignBorrowed x)
+  | Loc { loc; borrows = `imm [] } ->
       let mem =
         match v with
         | String data -> Mem.move st.memory loc x
@@ -199,7 +212,6 @@ let set_var st x (v : memval) : unit trace_result =
       in
       st.memory <- mem;
       ok ()
-  | Loc { mut; loc } when not mut -> error (CannotMutate x)
   | _ -> error (TypeError (spr "cannot assign to the function %s" x))
 
 let new_fn st name pars body ret =
