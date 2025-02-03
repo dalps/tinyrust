@@ -205,9 +205,9 @@ let trace_prog (n_steps : int) (prog : statement list) : trace_outcome =
       match trace1_expr st expr with
       | Ok e' ->
           if is_value e' then (acc, ok e')
-          else go (i + 1) ({ expr = e'; state = State.copy st } :: acc) e'
+          else go (i + 1) ({ expr; state = State.copy st } :: acc) e'
       | err -> (acc, err)
     else (acc, error (OutOfGas n_steps))
   in
-  let lst, result = go 0 [ { expr = entry_point; state = State.copy st } ] entry_point in
+  let lst, result = go 0 [] entry_point in
   { state = st; trace = List.rev lst; result }

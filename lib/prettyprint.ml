@@ -165,7 +165,7 @@ let string_of_memory h =
 let string_of_state st =
   spr "%s%s\n%s\n\n%s\n%s\n"
     (if st.loop_level <> 0 then
-       spr "%s%d\n"
+       spr "%s%d\n\n"
          ANSITerminal.(sprintf [ blue; Bold ] "Loop level: ")
          st.loop_level
      else "")
@@ -200,7 +200,12 @@ let string_of_trace_error = function
       spr "[CannotAssignBorrowed] cannot assign to %s because it is borrowed" x
   | TODO -> "[TODO]"
 
-let string_of_traceoutcome (out : trace_outcome) =
+let string_of_trace_result = function
+  | Error err ->
+      ANSITerminal.(sprintf [ red; Bold ] "Error: ") ^ string_of_trace_error err
+  | Ok _ -> ANSITerminal.(sprintf [ green; Bold ] "Ok")
+
+let string_of_trace_outcome (out : trace_outcome) =
   let t =
     List.mapi
       (fun i (s : snapshot) ->
@@ -212,16 +217,9 @@ let string_of_traceoutcome (out : trace_outcome) =
       out.trace
     |> String.concat "\n"
   in
-  let r =
-    match out.result with
-    | Error err ->
-        ANSITerminal.(sprintf [ red; Bold ] "Error: ")
-        ^ string_of_trace_error err
-    | Ok output -> ANSITerminal.(sprintf [ green; Bold ] "Ok")
-  in
   spr "%s\n%s\n%s\n%s\n" t
     ANSITerminal.(sprintf [ red ] "\n--- Results ---\n")
-    r
+    (string_of_trace_result out.result)
     (if out.state.output = "" then ""
      else
        spr "%s\n%s"

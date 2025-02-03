@@ -1,4 +1,4 @@
 (executable
  (public_name tinyrust)
  (name main)
- (libraries tinyrustLib ANSITerminal))
+ (libraries tinyrustLib ANSITerminal minttea))
