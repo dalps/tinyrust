@@ -93,7 +93,9 @@ let init () =
 let copy st = { st with envstack = Stack.copy st.envstack }
 let topenv st = Stack.top st.envstack
 let popenv st = Stack.pop st.envstack
-let dropenv st = Stack.drop st.envstack
+let dropenv st =
+
+  Stack.drop st.envstack
 let pushenv st env = Stack.push env st.envstack
 let update_topenv st (update : env -> env trace_result) : unit trace_result =
   let open Types.Result in
@@ -116,27 +118,27 @@ let exit_loop st =
     ok ())
   else error NotInLoop
 
-let borrow st x bob : loc trace_result =
+let borrow st ?(recv = "anon") src : memval trace_result =
   let open Result in
   let env = topenv st in
-  let* v = Env.find x env in
+  let* v = Env.find src env in
   match v with
   | Loc ({ borrows = `imm xs } as data) ->
-      let data = { data with borrows = `imm (bob :: xs) } in
-      let* _ = update_topenv st (fun env -> ok (Env.add x (Loc data) env)) in
-      ok data
+      let data = { data with borrows = `imm (recv :: xs); mut = false } in
+      let* _ = update_topenv st (fun env -> ok (Env.add src (Loc data) env)) in
+      ok (Ref data)
   | Loc { borrows = `mut _ } ->
-      error (DataRace { borrowed = x; is = `imm; want = `mut })
+      error (DataRace { borrowed = src; is = `imm; want = `mut })
   | _ -> error (TypeError "Non-value cannot be referenced")
 
 (** [borrow_mut st src recv] lets [recv] borrow the value of [src] mutably. *)
-let borrow_mut st src recv : memval trace_result =
+let borrow_mut st ?(recv = "anon") src : memval trace_result =
   let open Result in
   let env = topenv st in
   let* v = Env.find src env in
   match v with
   | Loc ({ borrows = `imm [] } as data) ->
-      let data = { data with borrows = `mut recv } in
+      let data = { data with borrows = `mut recv; mut = true } in
       let* _ = update_topenv st (fun env -> ok (Env.add src (Loc data) env)) in
       ok (Ref data)
   | Loc _ -> error (DataRace { borrowed = src; is = `mut; want = `mut })

@@ -55,7 +55,12 @@ let rec string_of_expr indent (expr : Ast.expr) : string =
         (tabs (indent + 1))
         (string_of_expr (indent + 1) e)
         (tabs indent)
-  | BLOCK_RET e -> string_of_expr indent e
+  | BLOCK_RET e ->
+      spr "{%s\n%s%s\n%s}"
+        ANSITerminal.(sprintf [ red ] "exec")
+        (tabs (indent + 1))
+        (string_of_expr (indent + 1) e)
+        (tabs indent)
   | CALL (x, es) ->
       let arg_strings =
         List.map (string_of_expr indent) es |> String.concat ","
@@ -112,7 +117,10 @@ let string_of_prim = function
   | PUSH_STR -> "push_str"
 
 let string_of_envval = function
-  | Loc data -> spr "%s%d" (if data.mut then "mut " else "") data.loc
+  | Loc data ->
+      spr "%s%s"
+        (if data.mut then "mut " else "")
+        ANSITerminal.(sprintf [ cyan ] "%d" data.loc)
   | Fn _ -> "<fn>"
   | Prim _ -> "<prim>"
 
@@ -128,7 +136,11 @@ let string_of_envstack envstack =
 
 let string_of_memory h =
   spr "{ %s }"
-    (Mem.fold (fun k v acc -> spr "%d/%s" k (string_of_memval v) :: acc) h []
+    (Mem.fold
+       (fun k v acc ->
+         spr "%s/%s" ANSITerminal.(sprintf [ cyan ] "%d" k) (string_of_memval v)
+         :: acc)
+       h []
     |> String.concat ", ")
 
 let string_of_state st =
@@ -142,17 +154,6 @@ let string_of_state st =
     (string_of_envstack st.envstack)
     ANSITerminal.(sprintf [ blue; Bold ] "Memory:")
     (string_of_memory st.memory)
-
-let string_of_traceoutcome (d : trace_outcome) =
-  List.mapi
-    (fun i (s : snapshot) ->
-      spr "%s\n%s\n%s\n%s"
-        ANSITerminal.(sprintf [ red ] "--- Step %d ---" i)
-        (string_of_state s.state)
-        ANSITerminal.(sprintf [ blue; Bold ] "Program:")
-        (string_of_expr 0 s.expr))
-    d.trace
-  |> String.concat "\n"
 
 let string_of_trace_error = function
   | TypeError s -> spr "[TypeError] %s" s
@@ -176,3 +177,31 @@ let string_of_trace_error = function
   | SegFault loc -> spr "[SegFault] Illegal access at %d" loc
   | MismatchedArgs ide -> spr "[MismatchedArgs] %s" ide
   | TODO -> "[TODO]"
+
+let string_of_traceoutcome (out : trace_outcome) =
+  let t =
+    List.mapi
+      (fun i (s : snapshot) ->
+        spr "%s\n%s\n%s\n%s"
+          ANSITerminal.(sprintf [ red ] "\n--- Step %d ---\n" i)
+          (string_of_state s.state)
+          ANSITerminal.(sprintf [ blue; Bold ] "Program:")
+          (string_of_expr 0 s.expr))
+      out.trace
+    |> String.concat "\n"
+  in
+  let r =
+    match out.result with
+    | Error err ->
+        ANSITerminal.(sprintf [ red; Bold ] "Error: ")
+        ^ string_of_trace_error err
+    | Ok output -> ANSITerminal.(sprintf [ green; Bold ] "Ok")
+  in
+  spr "%s\n%s\n%s\n%s\n" t
+    ANSITerminal.(sprintf [ red ] "\n--- Results ---\n")
+    r
+    (if out.state.output = "" then ""
+     else
+       spr "%s\n%s"
+         ANSITerminal.(sprintf [ yellow; Bold ] "Output:")
+         out.state.output)

@@ -26,19 +26,22 @@ let memval_of_expr : expr -> memval trace_result =
   | UNIT -> ok Unit
   | _ -> error (TypeError "Not a value")
 
-let ( let& ) ((constr, e) : (expr -> 'term) * expr trace_result)
+let ( let& )
+    ((step, wrapper, e) : (expr -> expr trace_result) * (expr -> 'term) * expr)
     (action : expr -> 'term trace_result) : 'term trace_result =
   let open Types.Result in
-  let* e = e in
-  if is_value e then action e else return (constr e)
+  if is_value e then action e
+  else
+    let* e' = step e in
+    return (wrapper e')
 
-let ( let$ ) ((constr, s) : (statement -> 'term) * conf trace_result)
+let ( let$ ) ((wrapper, s) : (statement -> 'term) * conf trace_result)
     (action : [ `Nothing | `Break | `LoopContinue ] -> 'term trace_result) :
     'term trace_result =
   let open Types.Result in
   let* s = s in
   match s with
-  | Continue s -> return (constr s)
+  | Continue s -> return (wrapper s)
   | Stop -> action `Nothing
   | Break -> action `Break
   | LoopContinue -> action `LoopContinue
@@ -46,19 +49,27 @@ let ( let$ ) ((constr, s) : (statement -> 'term) * conf trace_result)
 let rec trace1_expr st (e : expr) : expr trace_result =
   let open Types.Result in
   match e with
-  | TRUE | FALSE | UNIT | CONST _ | STRING _ -> return e
+  | TRUE | FALSE | UNIT | CONST _ | STRING _ | BREAK | CONTINUE -> return e
   | VAR x ->
       let* res = State.get_var st x in
       expr_of_memval res |> return
-  | ARITH2 (op, e1, e2) -> arith2 op <$> trace1_expr st e1 <*> trace1_expr st e2
+  | ARITH2 (op, e1, e2) -> (
+      match (e1, e2) with
+      | CONST n1, CONST n2 -> return (apply_binop op n1 n2)
+      | CONST _, e2 ->
+          let* e2' = trace1_expr st e2 in
+          return (ARITH2 (op, e1, e2'))
+      | e1, _ ->
+          let* e1' = trace1_expr st e1 in
+          return (ARITH2 (op, e1', e2)))
   | ASSIGN (x, e) ->
-      let& e' = (assign x, trace1_expr st e) in
+      let& e' = (trace1_expr st, assign x, e) in
       let* v = memval_of_expr e' in
       let* _ = State.set_var st x v in
       return UNIT
   | BLOCK (s, e) ->
       State.new_block_env st;
-      return (BLOCK_EXEC (s, e))
+      trace1_expr st (BLOCK_EXEC (s, e))
   | BLOCK_EXEC (s, e) -> (
       let* c = trace1_statement st s in
       match c with
@@ -72,25 +83,32 @@ let rec trace1_expr st (e : expr) : expr trace_result =
           | Some e -> return (BLOCK_RET e))
       | Continue s' -> return (BLOCK_EXEC (s', e)))
   | BLOCK_RET e ->
-      let& v = (block_ret, trace1_expr st e) in
+      let& v = (trace1_expr st, block_ret, e) in
       State.dropenv st;
       return v
-  | CALL (f, args) -> trace1_args st f [] args
+  | CALL (f, args) ->
+      pr "calling %s with %d args\n" f (List.length args);
+      trace1_args st f [] args
   | IFE (e0, e1, e2) -> (
-      let& v = ((fun e0' -> ife e0' e1 e2), trace1_expr st e0) in
+      let& v = (trace1_expr st, (fun e0' -> ife e0' e1 e2), e0) in
       match v with
       | TRUE -> return e1
       | FALSE -> return e2
       | _ -> error (TypeError "if guard not bool"))
   | LOOP (BLOCK (s, e)) ->
       let s =
-        match e with
-        | Some e -> seq s (expr e)
-        | None -> s
+        if s = EMPTY then
+          match e with
+          | Some e -> expr e
+          | None -> expr UNIT
+        else
+          match e with
+          | Some e -> seq s (expr e)
+          | None -> s
       in
       State.new_block_env st;
       State.enter_loop st;
-      return (loop_exec s s)
+      trace1_expr st (loop_exec s s)
   | LOOP_EXEC e -> (
       let* c = trace1_statement st e.curr in
       match c with
@@ -100,8 +118,16 @@ let rec trace1_expr st (e : expr) : expr trace_result =
           return UNIT
       | Stop | LoopContinue -> return (loop_exec e.orig e.orig)
       | Continue s' -> return (LOOP_EXEC { e with curr = s' }))
-  | BREAK -> return BREAK
-  | CONTINUE -> return CONTINUE
+  | REF { mut; e } ->
+      let* e = trace1_expr st e in
+      let _ =
+        match e with
+        | VAR x ->
+            let* _ = if mut then borrow_mut st x else borrow st x in
+            return ()
+        | _ -> return ()
+      in
+      return (REF { mut; e })
   | _ -> error TODO
 
 and trace1_args st (f : ide) (vals : expr list) (args : expr list) :
@@ -112,7 +138,7 @@ and trace1_args st (f : ide) (vals : expr list) (args : expr list) :
   | v :: args when is_value v -> trace1_args st f (v :: vals) args
   | arg :: args ->
       let* arg' = trace1_expr st arg in
-      return (CALL (f, arg' :: args))
+      return (CALL (f, vals @ (arg' :: args)))
 
 and call_fun st (f : ide) (args : expr list) : expr trace_result =
   let open Types.Result in
@@ -120,6 +146,8 @@ and call_fun st (f : ide) (args : expr list) : expr trace_result =
   | Ok (`Fn { pars; body; ret }), _ ->
       State.new_fn_env st;
       let* _ =
+        pr "Call parameters: want: %d, got: %d\n" (List.length pars)
+          (List.length args);
         try
           List.fold_left2
             (fun _ par arg ->
@@ -144,16 +172,16 @@ and trace1_statement st (t : statement) : conf trace_result =
   | EMPTY -> return stop
   | LET data ->
       let& v =
-        (continue % let_stmt data.name data.mut, trace1_expr st data.body)
+        (trace1_expr st, continue % let_stmt data.name data.mut, data.body)
       in
-      let* v = memval_of_expr v in
+      let* v = memval_of_expr data.body in
       let* _ = State.new_var st data.name v ~mut:data.mut in
       return stop
   | FUNDECL data ->
       let* _ = State.new_fn st data.name data.pars data.body data.ret in
       return stop
   | EXPR e -> (
-      let& b = (continue % expr, trace1_expr st e) in
+      let& b = (trace1_expr st, continue % expr, e) in
       match b with
       | BREAK -> return Break
       | CONTINUE -> return LoopContinue
