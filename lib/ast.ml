@@ -29,7 +29,7 @@ type expr =
   | LOOP of expr
   | LOOP_EXEC of { curr : statement; orig : statement }
   | REF of { mut : bool; e : expr }
-  | BORROW of loc
+  | BORROW of loc owned
   | BREAK
   | CONTINUE
 [@@deriving show]

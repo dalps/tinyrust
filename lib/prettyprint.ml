@@ -82,8 +82,8 @@ let rec string_of_expr indent (expr : Ast.expr) : string =
         (string_of_expr indent e.e)
   | BORROW loc ->
       spr "&%s%s"
-        (if loc.mut then keyword "mut " else "")
-        ANSITerminal.(sprintf [ cyan ] "%d" loc.loc)
+        (if loc.value.mut then keyword "mut " else "")
+        ANSITerminal.(sprintf [ cyan ] "%d" loc.value.loc)
   | BREAK -> keyword "break"
   | CONTINUE -> keyword "continue"
 
@@ -115,7 +115,7 @@ let string_of_memval = function
   | Unit -> "()"
   | Bool b -> string_of_bool b
   | Str s -> spr "\"%s\"" s
-  | Ref data -> spr "&(%d)" data.loc
+  | Borrow data -> spr "&(%d)" data.value.loc
   | String data ->
       spr "String { data: \"%s\"; owner: %s }" data.value data.owner
   | Moved x -> ANSITerminal.(sprintf [ red ] "moved")

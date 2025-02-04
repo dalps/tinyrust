@@ -8,7 +8,7 @@ open Errors
 type fn_data = { pars : ide list; body : statement; ret : expr option }
 [@@deriving show]
 
-type ty = T_String | T_Ref of bool * ty | T_I32 | T_Bool | T_Unit
+type ty = T_String | T_Borrow of bool * ty | T_I32 | T_Bool | T_Unit
 [@@deriving show]
 
 type prim = PRINTLN | PUSH_STR [@@deriving show]
@@ -16,7 +16,7 @@ type prim = PRINTLN | PUSH_STR [@@deriving show]
 type memval =
   | I32 of int
   | Bool of bool
-  | Ref of loc
+  | Borrow of loc owned
   | Unit
   | Str of string
   | String of string owned
@@ -113,7 +113,7 @@ let exit_loop st =
     ok ())
   else error NotInLoop
 
-let borrow st ?(recv = "anon") src : loc trace_result =
+let borrow st ?(recv = "anon") src : memval trace_result =
   let open Result in
   let env = topenv st in
   let* v = Env.find src env in
@@ -121,13 +121,13 @@ let borrow st ?(recv = "anon") src : loc trace_result =
   | Loc ({ borrows = `imm xs } as data) ->
       let data = { data with borrows = `imm (recv :: xs) } in
       let* _ = update_topenv st (fun env -> ok (Env.add src (Loc data) env)) in
-      ok data
+      ok (Borrow { value = data; owner = src })
   | Loc { borrows = `mut _ } ->
       error (DataRace { borrowed = src; is = `imm; want = `mut })
   | _ -> error (TypeError "Non-value cannot be referenced")
 
 (** [borrow_mut st src recv] lets [recv] borrow the value of [src] mutably. *)
-let borrow_mut st ?(recv = "anon") src : loc trace_result =
+let borrow_mut st ?(recv = "anon") src : memval trace_result =
   let open Result in
   let env = topenv st in
   let* v = Env.find src env in
@@ -135,14 +135,25 @@ let borrow_mut st ?(recv = "anon") src : loc trace_result =
   | Loc ({ borrows = `imm [] } as data) ->
       let data = { data with borrows = `mut recv; mut = true } in
       let* _ = update_topenv st (fun env -> ok (Env.add src (Loc data) env)) in
-      ok data
+      ok (Borrow { value = data; owner = src })
   | Loc _ -> error (DataRace { borrowed = src; is = `mut; want = `mut })
   | _ -> error (TypeError "Non-value cannot be referenced")
 
-let deref st (ref : memval) : memval trace_result =
+let unborrow st borrow : unit trace_result =
   let open Result in
-  match ref with
-  | Ref data -> Mem.find st.memory data.loc
+  match borrow with
+  | Borrow data ->
+      update_topenv st (fun env ->
+          let* owner = Env.find data.owner env in
+          match owner with
+          | Loc owner_data -> ok env
+          | _ -> error (TypeError "Can't unborrow a non-reference"))
+  | _ -> error (TypeError "Can't unborrow a non-reference")
+
+let deref st (borrow : memval) : memval trace_result =
+  let open Result in
+  match borrow with
+  | Borrow data -> Mem.find st.memory data.value.loc
   | _ -> error (TypeError "Can't deref a non-reference")
 
 let get_var st x : memval trace_result =
@@ -190,8 +201,7 @@ let new_var ~(mut : bool) st x init : unit trace_result =
       st.memory <- mem;
       ok (Env.add x (Loc fresh_loc) env))
 
-(* Assignment moves r. Problem: change r's owner, but the owner is associated to locs, not value
-
+(*
    let mut x = String::from("hello")
    let y = x;  // move
    x = y       // move back
@@ -202,8 +212,7 @@ let set_var st x (v : memval) : unit trace_result =
   let* res = Env.find x env in
   match res with
   | Loc { mut = false } -> error (CannotMutate x)
-  | Loc { borrows = `imm (_ :: _) | `mut _ } ->
-      error (CannotAssignBorrowed x)
+  | Loc { borrows = `imm (_ :: _) | `mut _ } -> error (CannotAssignBorrowed x)
   | Loc { loc; borrows = `imm [] } ->
       let mem =
         match v with

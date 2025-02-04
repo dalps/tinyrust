@@ -7,10 +7,16 @@ module Result = struct
   let ( <$> ) = map
 
   let ( <|> ) : ('a, 'e) result -> ('a, 'e) result -> ('a, 'e) result =
-   fun a b -> match a with Error _ -> b | Ok a -> Ok a
+   fun a b ->
+    match a with
+    | Error _ -> b
+    | Ok a -> Ok a
 
   let ( <*> ) : ('a -> 'b, 'e) result -> ('a, 'e) result -> ('b, 'e) result =
-   fun a b -> match a with Error s -> Error s | Ok f -> f <$> b
+   fun a b ->
+    match a with
+    | Error s -> Error s
+    | Ok f -> f <$> b
 
   let ( >>= ) = bind
   let ( let* ) = bind
@@ -45,4 +51,24 @@ module WithState = struct
 
   let ( <*> ) = seq
   let ( <$> ) = map
+end
+
+(* There is no way to push the same value twice *)
+module Locs : sig
+  type secret
+  val pop : unit -> secret
+  val push : secret -> unit
+  val to_int : secret -> int
+end = struct
+  let s = ref (Seq.ints 0)
+  type secret = int
+
+  let pop () =
+    let x, xs = Seq.uncons !s |> Option.get in
+    s := xs;
+    x
+
+  let push n = s := Seq.cons n !s
+
+  let to_int n = n
 end

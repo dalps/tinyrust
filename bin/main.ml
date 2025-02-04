@@ -5,16 +5,14 @@ open Prettyprint
 open Minttea
 
 type model = {
-  _example_name : string;
+  example_name : string;
   program : string;
   trace_outcome : trace_outcome;
   current_step : int;
   max_steps : int;
 }
 
-(* type event = Next | Prev | Quit | Menu *)
-
-let init _model = Command.Noop
+let init _ = Command.Noop
 
 let update event (model : model) =
   match event with
@@ -45,7 +43,9 @@ let view model =
   in
   if model.current_step = 0 then
     spr "%s%s\n\n%s"
-      ANSITerminal.(sprintf [ yellow ] "\n--- Source code ---\n\n")
+      ANSITerminal.(
+        sprintf [ yellow ] "\n--- Source of %s ---\n\n"
+          (Filename.basename model.example_name))
       model.program usage
   else
     let snapshot =
@@ -72,21 +72,20 @@ let view model =
          spr "\n\n%s" (string_of_trace_result model.trace_outcome.result)
        else "")
       ANSITerminal.(sprintf [ yellow; Bold ] "Output:")
-      (if snapshot.state.output <> "" then
-         spr "%s" snapshot.state.output
+      (if snapshot.state.output <> "" then spr "%s" snapshot.state.output
        else "")
       usage
 
 let () =
   let max_steps = Sys.argv.(1) |> int_of_string in
-  let _example_name = Sys.argv.(2) in
-  let program = read_file _example_name in
+  let example_name = Sys.argv.(2) in
+  let program = read_file example_name in
   let trace_outcome =
     program |> Parser.parse_string |> Trace.trace_prog max_steps
   in
   let initial_model : model =
     {
-      _example_name;
+      example_name;
       program;
       trace_outcome;
       current_step = 0;

@@ -16,7 +16,7 @@ let expr_of_memval : memval -> expr trace_result =
   | Bool true -> TRUE |> ok
   | Bool false -> FALSE |> ok
   | Unit -> UNIT |> ok
-  | Ref data -> REF { mut = data.mut; e = CONST data.loc } |> ok
+  | Borrow data -> REF { mut = data.value.mut; e = CONST data.value.loc } |> ok
   | Str s -> STR s |> ok
   | String data -> STRING data |> ok
   | Moved x -> error (MovedValue x)
@@ -29,7 +29,7 @@ let memval_of_expr st : expr -> memval trace_result =
   | STRING data -> ok (String data)
   | UNIT -> ok Unit
   | BORROW loc ->
-      let* v = deref st (Ref loc) in
+      let* v = deref st (Borrow loc) in
       ok v
   | _ -> error (TypeError "Not a value")
 
@@ -124,9 +124,11 @@ let rec trace1_expr st (e : expr) : expr trace_result =
           return UNIT
       | Stop | LoopContinue -> return (loop_exec e.orig e.orig)
       | Continue s' -> return (LOOP_EXEC { e with curr = s' }))
-  | REF { mut; e = VAR x } ->
+  | REF { mut; e = VAR x } -> (
       let* loc = if mut then borrow_mut st x else borrow st x in
-      return (BORROW loc)
+      match loc with
+      | Borrow data -> return (BORROW data)
+      | _ -> error NoRuleApplies)
   | _ -> error NoRuleApplies
 
 and trace1_args st (f : ide) (vals : expr list) (args : expr list) :
