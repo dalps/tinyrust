@@ -9,8 +9,7 @@ let string_of_memval = function
   | Str s -> s
   | String data -> data.value
   | Borrow data ->
-      spr "&%s(%d)" (if data.value.mut then "mut " else "") data.value.loc
-  | Moved _ -> spr "(moved)"
+      spr "&%s(%d)" (if data.mut then "mut " else "") data.owner.loc
 
 let println (st : state) s : unit trace_result =
   let open Types.Result in
@@ -29,8 +28,9 @@ let println (st : state) s : unit trace_result =
              | `Text s -> ok s
              | `Delim groups ->
                  let var = Group.get groups 1 in
-                 let* r = borrow ~recv:"println" st var in
+                 let* r = borrow ~by:"println" st var in
                  let* v = deref st r in
+                 let* _ = unborrow st r in
                  ok (string_of_memval v)
            in
            ok (acc ^ next))
@@ -41,7 +41,7 @@ let println (st : state) s : unit trace_result =
 
 let push_str st x str : unit trace_result =
   let open Types.Result in
-  let* ref = borrow_mut st x ~recv:"push_str" in
+  let* ref = borrow_mut st x ~by:"push_str" in
   let* v = deref st ref in
   match v with
   | String s1 -> State.set_var st x (String { s1 with value = s1.value ^ str })

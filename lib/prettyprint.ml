@@ -80,10 +80,10 @@ let rec string_of_expr indent (expr : Ast.expr) : string =
       spr "&%s%s"
         (if e.mut then keyword "mut " else "")
         (string_of_expr indent e.e)
-  | BORROW loc ->
+  | BORROW data ->
       spr "&%s%s"
-        (if loc.value.mut then keyword "mut " else "")
-        ANSITerminal.(sprintf [ cyan ] "%d" loc.value.loc)
+        (if data.mut then keyword "mut " else "")
+        ANSITerminal.(sprintf [ cyan ] "%d" data.owner.loc)
   | BREAK -> keyword "break"
   | CONTINUE -> keyword "continue"
 
@@ -115,10 +115,9 @@ let string_of_memval = function
   | Unit -> "()"
   | Bool b -> string_of_bool b
   | Str s -> spr "\"%s\"" s
-  | Borrow data -> spr "&(%d)" data.value.loc
+  | Borrow data -> spr "&(%d)" data.owner.loc
   | String data ->
-      spr "String { data: \"%s\"; owner: %s }" data.value data.owner
-  | Moved x -> ANSITerminal.(sprintf [ red ] "moved")
+      spr "String { data: \"%s\"; owner: %s }" data.value data.owner.id
 
 let string_of_prim = function
   | PRINTLN -> "println"
@@ -130,16 +129,14 @@ let string_of_envval = function
         (if data.mut then "mut " else "")
         ANSITerminal.(sprintf [ cyan ] "%d" data.loc)
         ANSITerminal.(
-          if data.borrows = `imm [] then ""
-          else
-            sprintf [ yellow ] " borrowed by: "
-            ^
-            match data.borrows with
-            | `imm [] -> ""
-            | `mut x -> sprintf [ yellow ] "&mut %s" x
-            | `imm l ->
-                sprintf [ yellow ] "%s"
-                  (List.map (fun s -> spr "&%s" s) l |> String.concat ", "))
+          match data.borrows with
+          | `imm xs when BorrowSet.is_empty xs -> ""
+          | `mut x -> sprintf [ yellow ] "mut borrow: %s" x
+          | `imm xs ->
+              sprintf [ yellow ] "borrow: %s"
+                (BorrowSet.elements xs
+                |> List.map (fun s -> spr "&%s" s)
+                |> String.concat ", "))
   | Fn _ -> "<fn>"
   | Prim _ -> "<prim>"
 
@@ -157,7 +154,9 @@ let string_of_memory h =
   spr "{ %s }"
     (Mem.fold
        (fun k v acc ->
-         spr "%s/%s" ANSITerminal.(sprintf [ cyan ] "%d" k) (string_of_memval v)
+         spr "%s/%s"
+           ANSITerminal.(sprintf [ cyan ] "%d" k.loc)
+           (string_of_memval v)
          :: acc)
        h []
     |> String.concat ", ")

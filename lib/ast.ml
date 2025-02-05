@@ -1,13 +1,16 @@
 type ide = string [@@deriving show]
 
-type loc = {
+module BorrowSet = Set.Make (String)
+
+type variable = {
+  id : ide;
   mut : bool;
   loc : int;
-  borrows : [ `imm of ide list | `mut of ide ];
+  borrows : [ `imm of BorrowSet.t | `mut of ide ]; [@opaque]
 }
 [@@deriving show]
-
-type 'v owned = { value : 'v; owner : ide } [@@deriving show]
+type 'v owned = { value : 'v; owner : variable } [@@deriving show]
+type borrow = { by: ide; mut : bool; owner : variable } [@@deriving show]
 
 type binop = ADD | MUL | SUB | MOD | DIV | EQ | LEQ [@@deriving show]
 
@@ -29,7 +32,7 @@ type expr =
   | LOOP of expr
   | LOOP_EXEC of { curr : statement; orig : statement }
   | REF of { mut : bool; e : expr }
-  | BORROW of loc owned
+  | BORROW of borrow
   | BREAK
   | CONTINUE
 [@@deriving show]
@@ -73,7 +76,8 @@ let arith2 op e1 e2 =
   | _ -> ARITH2 (op, e1, e2)
 
 let is_value = function
-  | TRUE | FALSE | CONST _ | STR _ | STRING _ | UNIT | BREAK | CONTINUE | BORROW _ ->
+  | TRUE | FALSE | CONST _ | STR _ | STRING _ | UNIT | BREAK | CONTINUE
+  | BORROW _ ->
       true
   | _ -> false
 

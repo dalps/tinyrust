@@ -29,3 +29,8 @@ string_of_statement 0 prog |> print_endline;;
 
 let init n = State.state_of_prog asts.(n);;
 let step st p = let p = trace1_expr st p in Result.get_ok p;;
+
+#install_printer pp_env;;
+#install_printer pp_envstack;;
+#install_printer pp_memory;;
+#install_printer pp_state;;

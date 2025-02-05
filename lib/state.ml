@@ -3,9 +3,12 @@ open Types
 open Utils
 open Errors
 
-(* Should the borrow type be carried by the environment or by the reference? *)
-
-type fn_data = { pars : ide list; body : statement; ret : expr option }
+type fn_data = {
+  id : ide;
+  pars : ide list;
+  body : statement;
+  ret : expr option;
+}
 [@@deriving show]
 
 type ty = T_String | T_Borrow of bool * ty | T_I32 | T_Bool | T_Unit
@@ -16,57 +19,67 @@ type prim = PRINTLN | PUSH_STR [@@deriving show]
 type memval =
   | I32 of int
   | Bool of bool
-  | Borrow of loc owned
+  | Borrow of borrow
   | Unit
   | Str of string
   | String of string owned
-  | Moved of ide
 [@@deriving show]
 
-type envval = Loc of loc | Fn of fn_data | Prim of prim [@@deriving show]
+type envval = Loc of variable | Fn of fn_data | Prim of prim [@@deriving show]
+
+module Variable = struct
+  type t = variable
+  let compare (t1 : variable) (t2 : variable) = compare t1.loc t2.loc
+end
 
 module Env = struct
-  module H = Map.Make (String)
-  include H
-  type t = envval H.t
+  module M = Map.Make (String)
+  include M
+  type t = envval M.t
 
   let find ide env : envval trace_result =
-    match H.find_opt ide env with
-    | Some v -> Result.ok v
-    | None -> Result.error (UnboundVar ide)
+    let open Result in
+    match M.find_opt ide env with
+    | Some v -> ok v
+    | None -> error (UnboundVar ide)
 end
 
 module Mem = struct
-  module M = Map.Make (Int)
+  module M = Map.Make (Variable)
   include M
   type t = memval M.t
 
-  let find m loc : memval trace_result =
+  let find m var : memval trace_result =
     let open Result in
-    match M.find_opt loc m with
-    | None -> error (SegFault loc)
-    | Some (Moved x) -> error (MovedValue x)
+    match M.find_opt var m with
     | Some v -> ok v
+    | None -> error (MovedValue var.id)
 
-  let move m loc from =
-    update loc
-      (fun v ->
-        match v with
-        | Some (String _) -> Some (Moved from)
-        | v -> v)
-      m
+  let move m (prev_owner : variable) (new_owner : variable) : t trace_result =
+    let open Result in
+    let* v = find m prev_owner in
+    let m1 =
+      M.update prev_owner
+        (fun v ->
+          match v with
+          | Some (String _) -> None
+          | v -> v)
+        m
+    in
+    ok (M.add new_owner v m1)
 end
 
 type env = Env.t
 type mem = Mem.t
 
 type state = {
+  envstack           : env Stack.t;
+  toplevel           : env;
   mutable memory     : mem;
-          envstack   : env Stack.t;
-          toplevel   : env;
   mutable loop_level : int;
   mutable output     : string;
-  mutable locs       : unit -> int
+  loc_generator      : unit -> int;
+  id_generator       : unit -> int;
 }
 [@@deriving fields]
 [@@ocamlformat "disable"]
@@ -77,15 +90,23 @@ let init () =
     Env.of_list [ ("println", Prim PRINTLN); ("push_str", Prim PUSH_STR) ]
   in
   let memory = Mem.empty in
-  let counter = ref 0 in
-  let locs () =
-    let c = !counter in
-    incr counter;
+  let loc_counter = ref 0 in
+  let id_counter = ref 0 in
+  let generator r () =
+    let c = !r in
+    incr r;
     c
   in
-  let _f = Seq.(ints 0 |> to_dispenser) in
   Stack.push prelude envstack;
-  { memory; envstack; toplevel = prelude; loop_level = 0; output = ""; locs }
+  {
+    memory;
+    envstack;
+    toplevel = prelude;
+    loop_level = 0;
+    output = "";
+    loc_generator = generator loc_counter;
+    id_generator = generator id_counter;
+  }
 
 let copy st = { st with envstack = Stack.copy st.envstack }
 let topenv st = Stack.top st.envstack
@@ -113,59 +134,78 @@ let exit_loop st =
     ok ())
   else error NotInLoop
 
-let borrow st ?(recv = "anon") src : memval trace_result =
+let borrow st ?(by = "anon") src : borrow trace_result =
   let open Result in
   let env = topenv st in
   let* v = Env.find src env in
   match v with
-  | Loc ({ borrows = `imm xs } as data) ->
-      let data = { data with borrows = `imm (recv :: xs) } in
-      let* _ = update_topenv st (fun env -> ok (Env.add src (Loc data) env)) in
-      ok (Borrow { value = data; owner = src })
+  | Loc ({ borrows = `imm xs } as owner) ->
+      let owner = { owner with borrows = `imm (BorrowSet.add by xs) } in
+      let* _ = update_topenv st (fun env -> ok (Env.add src (Loc owner) env)) in
+      ok { by; owner; mut = false }
   | Loc { borrows = `mut _ } ->
-      error (DataRace { borrowed = src; is = `imm; want = `mut })
+      error (DataRace { borrowed = src; is = `mut; want = `imm })
   | _ -> error (TypeError "Non-value cannot be referenced")
 
 (** [borrow_mut st src recv] lets [recv] borrow the value of [src] mutably. *)
-let borrow_mut st ?(recv = "anon") src : memval trace_result =
+let borrow_mut st ?(by = "anon") src : borrow trace_result =
   let open Result in
   let env = topenv st in
   let* v = Env.find src env in
   match v with
-  | Loc ({ borrows = `imm [] } as data) ->
-      let data = { data with borrows = `mut recv; mut = true } in
-      let* _ = update_topenv st (fun env -> ok (Env.add src (Loc data) env)) in
-      ok (Borrow { value = data; owner = src })
+  | Loc data when not data.mut -> error (MutBorrowOfNonMut src)
+  | Loc ({ borrows = `imm xs } as owner) when BorrowSet.is_empty xs ->
+      let owner = { owner with borrows = `mut by; mut = true } in
+      let* _ = update_topenv st (fun env -> ok (Env.add src (Loc owner) env)) in
+      ok { by; owner; mut = true }
+  | Loc { borrows = `imm _ } ->
+      error (DataRace { borrowed = src; is = `imm; want = `mut })
   | Loc _ -> error (DataRace { borrowed = src; is = `mut; want = `mut })
   | _ -> error (TypeError "Non-value cannot be referenced")
 
-let unborrow st borrow : unit trace_result =
+let unborrow st (borrow : borrow) : unit trace_result =
   let open Result in
-  match borrow with
-  | Borrow data ->
-      update_topenv st (fun env ->
-          let* owner = Env.find data.owner env in
-          match owner with
-          | Loc owner_data -> ok env
-          | _ -> error (TypeError "Can't unborrow a non-reference"))
-  | _ -> error (TypeError "Can't unborrow a non-reference")
+  update_topenv st (fun env ->
+      Env.update borrow.owner.id
+        (function
+          | Some (Loc owner) ->
+              let owner =
+                if borrow.mut then { owner with borrows = `imm BorrowSet.empty }
+                else
+                  {
+                    owner with
+                    borrows =
+                      (match owner.borrows with
+                      | `imm s when BorrowSet.is_empty s ->
+                          failwith "no immutable borrows to remove"
+                      | `mut _ ->
+                          failwith
+                            "cannot remove mutable borrow from immutably \
+                             borrowed variable"
+                      | `imm s -> `imm (BorrowSet.remove borrow.by s));
+                  }
+              in
+              Some (Loc owner)
+          | Some v -> Some v
+          | None -> None)
+        env
+      |> ok)
 
-let deref st (borrow : memval) : memval trace_result =
+let rec deref st (borrow : borrow) : memval trace_result =
   let open Result in
-  match borrow with
-  | Borrow data -> Mem.find st.memory data.value.loc
-  | _ -> error (TypeError "Can't deref a non-reference")
+  let* v = Mem.find st.memory borrow.owner in
+  match v with
+  | Borrow b -> deref st b
+  | v -> ok v
 
 let get_var st x : memval trace_result =
   let open Result in
   let env = topenv st in
   let* v = Env.find x env in
   match v with
-  | Loc { loc } -> (
-      let* value = Mem.find st.memory loc in
-      match value with
-      | Moved _ -> error (MovedValue x)
-      | _ -> ok value)
+  | Loc var ->
+      let* value = Mem.find st.memory var in
+      ok value
   | _ -> error (TypeError (spr "%s is a function, but I expected a value" x))
 
 let get_fn st x : [ `Fn of fn_data | `Prim of prim ] trace_result =
@@ -179,27 +219,20 @@ let get_fn st x : [ `Fn of fn_data | `Prim of prim ] trace_result =
 
 let new_var ~(mut : bool) st x init : unit trace_result =
   let open Result in
-  let fresh_loc = { mut; loc = st.locs (); borrows = `imm [] } in
+  let var : variable =
+    { id = x; mut; loc = st.loc_generator (); borrows = `imm BorrowSet.empty }
+  in
   update_topenv st (fun env ->
       let* mem =
         match init with
-        | String data -> (
-            let new_init = String { data with owner = x } in
-            if data.owner = "" then
-              ok (Mem.add fresh_loc.loc new_init st.memory)
-            else
-              (* find the previous owner *)
-              let* v = Env.find data.owner env in
-              match v with
-              | Loc loc ->
-                  let mem = Mem.move st.memory loc.loc data.owner in
-                  let mem = Mem.add fresh_loc.loc new_init mem in
-                  ok mem
-              | _ -> ok st.memory)
-        | _ -> ok (Mem.add fresh_loc.loc init st.memory)
+        | String data ->
+            let new_init = String { data with owner = var } in
+            if data.owner.id = "" then ok (Mem.add var new_init st.memory)
+            else Mem.move st.memory var data.owner
+        | _ -> ok (Mem.add var init st.memory)
       in
       st.memory <- mem;
-      ok (Env.add x (Loc fresh_loc) env))
+      ok (Env.add x (Loc var) env))
 
 (*
    let mut x = String::from("hello")
@@ -212,20 +245,20 @@ let set_var st x (v : memval) : unit trace_result =
   let* res = Env.find x env in
   match res with
   | Loc { mut = false } -> error (CannotMutate x)
-  | Loc { borrows = `imm (_ :: _) | `mut _ } -> error (CannotAssignBorrowed x)
-  | Loc { loc; borrows = `imm [] } ->
-      let mem =
+  | Loc ({ borrows = `imm xs } as var) when BorrowSet.is_empty xs ->
+      let* mem =
         match v with
-        | String data -> Mem.move st.memory loc x
-        | v -> Mem.add loc v st.memory
+        | String data -> Mem.move st.memory data.owner var
+        | v -> ok (Mem.add var v st.memory)
       in
       st.memory <- mem;
       ok ()
+  | Loc { loc; borrows = _ } -> error (CannotAssignBorrowed x)
   | _ -> error (TypeError (spr "cannot assign to the function %s" x))
 
-let new_fn st name pars body ret =
+let new_fn st id pars body ret =
   update_topenv st (fun env ->
-      Result.ok (Env.add name (Fn { pars; body; ret }) env))
+      Result.ok (Env.add id (Fn { id; pars; body; ret }) env))
 
 let state_of_prog (prog : statement list) : state =
   let st = init () in

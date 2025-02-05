@@ -55,13 +55,13 @@ end
 
 (* There is no way to push the same value twice *)
 module Locs : sig
-  type secret
-  val pop : unit -> secret
-  val push : secret -> unit
-  val to_int : secret -> int
+  type loc
+  val pop : unit -> loc
+  val push : loc -> unit
+  val to_int : loc -> int
 end = struct
   let s = ref (Seq.ints 0)
-  type secret = int
+  type loc = int
 
   let pop () =
     let x, xs = Seq.uncons !s |> Option.get in

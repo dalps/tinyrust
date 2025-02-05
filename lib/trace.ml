@@ -16,21 +16,18 @@ let expr_of_memval : memval -> expr trace_result =
   | Bool true -> TRUE |> ok
   | Bool false -> FALSE |> ok
   | Unit -> UNIT |> ok
-  | Borrow data -> REF { mut = data.value.mut; e = CONST data.value.loc } |> ok
+  | Borrow data -> REF { mut = data.mut; e = CONST data.owner.loc } |> ok
   | Str s -> STR s |> ok
   | String data -> STRING data |> ok
-  | Moved x -> error (MovedValue x)
 
 let memval_of_expr st : expr -> memval trace_result =
   let open Types.Result in
   function
   | CONST n -> ok (I32 n)
-  | STR value -> ok (String { value; owner = "" })
   | STRING data -> ok (String data)
   | UNIT -> ok Unit
-  | BORROW loc ->
-      let* v = deref st (Borrow loc) in
-      ok v
+  | BORROW loc -> ok (Borrow loc)
+  | STR value -> error (TypeError "String slice is not valid memval")
   | _ -> error (TypeError "Not a value")
 
 let ( let& )
@@ -59,8 +56,10 @@ let rec trace1_expr st (e : expr) : expr trace_result =
   | e when is_value e -> return e
   | VAR x ->
       let* res = State.get_var st x in
+      (* if is_copy data.ty then *)
       let* v = expr_of_memval res in
       return v
+      (* else error (TypeError "need to copy") *)
   | ARITH2 (op, e1, e2) -> (
       match (e1, e2) with
       | CONST n1, CONST n2 -> return (apply_binop op n1 n2)
@@ -70,6 +69,7 @@ let rec trace1_expr st (e : expr) : expr trace_result =
       | e1, _ ->
           let* e1' = trace1_expr st e1 in
           return (ARITH2 (op, e1', e2)))
+  | ASSIGN (x, VAR y) -> error TODO
   | ASSIGN (x, e) ->
       let& e' = (trace1_expr st, assign x, e) in
       let* v = memval_of_expr st e' in
@@ -90,6 +90,7 @@ let rec trace1_expr st (e : expr) : expr trace_result =
               return UNIT
           | Some e -> return (BLOCK_RET e))
       | Continue s' -> return (BLOCK_EXEC (s', e)))
+  | BLOCK_RET (VAR x) -> error TODO
   | BLOCK_RET e ->
       let& v = (trace1_expr st, block_ret, e) in
       State.dropenv st;
@@ -124,19 +125,18 @@ let rec trace1_expr st (e : expr) : expr trace_result =
           return UNIT
       | Stop | LoopContinue -> return (loop_exec e.orig e.orig)
       | Continue s' -> return (LOOP_EXEC { e with curr = s' }))
-  | REF { mut; e = VAR x } -> (
-      let* loc = if mut then borrow_mut st x else borrow st x in
-      match loc with
-      | Borrow data -> return (BORROW data)
-      | _ -> error NoRuleApplies)
+  | REF { mut; e = VAR x } ->
+      let* b = if mut then borrow_mut st x else borrow st x in
+      return (BORROW b)
   | _ -> error NoRuleApplies
 
 and trace1_args st (f : ide) (vals : expr list) (args : expr list) :
     expr trace_result =
   let open Types.Result in
   match args with
-  | [] -> call_fun st f vals
+  | [] -> call_fun st f (List.rev vals)
   | v :: args when is_value v -> trace1_args st f (v :: vals) args
+  | (VAR _ as v) :: args -> trace1_args st f (v :: vals) args
   | arg :: args ->
       let* arg' = trace1_expr st arg in
       return (CALL (f, vals @ (arg' :: args)))
