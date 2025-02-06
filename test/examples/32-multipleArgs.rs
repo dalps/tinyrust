@@ -1,4 +1,6 @@
-fn foo(x: i32, y: i32, bar: i32) {
+// Bonus program to test support for multiple arguments
+
+fn foo(x: i32, y: i32, bar: i32) -> i32 {
   println!("{bar}");
   bar + x * y
 }

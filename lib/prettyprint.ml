@@ -177,7 +177,8 @@ let string_of_trace_error = function
   | TypeError s -> spr "[TypeError] %s" s
   | CannotMutate x -> spr "[CannotMutate] cannot mutate immutable variable %s" x
   | UnboundVar x -> spr "[UnboundVar] %s not defined in this scope" x
-  | MovedValue x -> spr "[MovedValue] borrow of moved value %s" x
+  | BorrowOfMovedValue x -> spr "[BorrowOfMovedValue] borrow of moved value %s" x
+  | MovedValue x -> spr "[MovedValue] use of moved value %s" x
   | OutOfGas i -> spr "[OutOfGas] trace run out of gas (%d)" i
   | NotInLoop -> "[NotInLoop] tried to break outside of a loop"
   | MutBorrowOfNonMut x ->

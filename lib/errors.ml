@@ -9,6 +9,7 @@ type trace_error =
   | UnboundVar of ide
   | OutOfGas of int
   | NotInLoop
+  | BorrowOfMovedValue of ide
   | MovedValue of ide
   | SegFault of int
   | MismatchedArgs of ide
