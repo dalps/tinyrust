@@ -33,11 +33,11 @@ let tests : (string * int * string trace_result) array =
     ("21-exprBlock.rs",       25,   Ok "7\n");
     ("22-funExpr.rs",         50,   Error (UnboundVar "interna"));
     ("23-scopeCheck.rs",      50,   Error (UnboundVar "y"));
-    ("24-borrowOk.rs",        50,   Ok "Ciao\nCiao\n");
+    ("24-borrowOk.rs",        50,   Ok "hellociao\n");
     ("25-borrowError.rs",     50,   Error (BorrowOfMovedValue "x"));
     ("26-borrowError.rs",     50,   Error (DataRace {borrowed = "x"; is = `mut; want = `mut}));
-    ("27-doubleRef.rs",       50,   Ok "Ciao\nCiao\n");
-    ("28-borrowError.rs",     100,  Error (MutBorrowOfNonMut "x"));
+    ("27-borrowError.rs",     50,   Error (DataRace {borrowed = "x"; is = `mut; want = `imm}));
+    ("28-borrowError.rs",     100,  Error (CannotMoveOut "x"));
     ("29-toplevelFn.rs",      100,  Ok "3 x 8 = 24\n");
     ("30-assignMoves.rs",     100,  Ok "Ciao\n");
     ("31-assignNewString.rs", 100,  Ok "hello ciao\n");

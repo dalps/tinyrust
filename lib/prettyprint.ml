@@ -177,7 +177,8 @@ let string_of_trace_error = function
   | TypeError s -> spr "[TypeError] %s" s
   | CannotMutate x -> spr "[CannotMutate] cannot mutate immutable variable %s" x
   | UnboundVar x -> spr "[UnboundVar] %s not defined in this scope" x
-  | BorrowOfMovedValue x -> spr "[BorrowOfMovedValue] borrow of moved value %s" x
+  | BorrowOfMovedValue x ->
+      spr "[BorrowOfMovedValue] borrow of moved value %s" x
   | MovedValue x -> spr "[MovedValue] use of moved value %s" x
   | OutOfGas i -> spr "[OutOfGas] trace run out of gas (%d)" i
   | NotInLoop -> "[NotInLoop] tried to break outside of a loop"
@@ -186,6 +187,8 @@ let string_of_trace_error = function
         "[MutBorrowOfNonMut] cannot borrow %s as mutable, as it is not \
          declared as mutable"
         x
+  | DataRace { borrowed; is = `mut; want = `mut } ->
+      spr "[DataRace] cannot borrow %s as mutable more than once" borrowed
   | DataRace data ->
       let format_mut = function
         | `mut -> "mutable"
@@ -193,11 +196,13 @@ let string_of_trace_error = function
       in
       spr "[DataRace] cannot borrow %s as %s because it is also borrowed as %s"
         data.borrowed (format_mut data.is) (format_mut data.want)
-  | SegFault loc -> spr "[SegFault] Illegal access at %d" loc
+  | SegFault loc -> spr "[SegFault] illegal memory access at %d" loc
   | MismatchedArgs ide -> spr "[MismatchedArgs] %s" ide
-  | NoRuleApplies -> "[NoRuleApplies]"
+  | NoRuleApplies -> "[NoRuleApplies] stuck term cannot take a step"
   | CannotAssignBorrowed x ->
       spr "[CannotAssignBorrowed] cannot assign to %s because it is borrowed" x
+  | CannotMoveOut x ->
+      spr "[CannotMoveOut] cannot move out of z because it is borrowed"
   | TODO -> "[TODO]"
 
 let string_of_trace_result = function

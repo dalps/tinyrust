@@ -4,6 +4,7 @@ open Ast
 type trace_error =
   | TypeError of string
   | CannotMutate of ide
+  | CannotMoveOut of ide
   | MutBorrowOfNonMut of ide
   | DataRace of { borrowed : ide; is : [ `imm | `mut ]; want : [ `imm | `mut ] }
   | UnboundVar of ide

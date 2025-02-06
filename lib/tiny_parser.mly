@@ -72,7 +72,7 @@ typ:
 
 fun_type:
   | t = typ { t }
-  | "&" t = typ { t }
+  | "&" boption("mut") t = typ { t }
 
 fun_return_type:
   | "->" fun_type {  }

@@ -1,6 +1,6 @@
 fn main() {
-  let x = &mut String::from("ciao");
+  let x = String::from("ciao");
   let y = x;
 
-  println!("{x}, {y}"); // borrow of moved value
+  println!("{x}, {y}"); // borrow of moved value x
 }

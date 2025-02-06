@@ -1,6 +1,10 @@
-fn main() {
-  let x = &String::from("ciao");
-  let y = x;
+fn pushCiao(s: &mut String) {
+  s.push_str("ciao");
+}
 
-  println!("{x}, {y}"); // ok
+fn main() {
+  let mut x = String::from("hello");
+  pushCiao(&mut x);
+
+  println!("{x}"); // ok
 }
