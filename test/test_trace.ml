@@ -13,7 +13,7 @@ let tests : (string * int * string trace_result) array =
     ("01-print.rs",           25,   Ok "3\n4\n");
     ("02-intError.rs",        25,   Error (CannotMutate "x"));
     ("03-intOk.rs",           25,   Ok "7\n");
-    ("04-stringError.rs",     25,   Error (CannotMutate "x"));
+    ("04-stringError.rs",     25,   Error (MutBorrowOfNonMut "x"));
     ("05-stringOk.rs",        25,   Ok "Ciao, mondo\n");
     ("06-scopeOk.rs",         25,   Ok "6\n3\n");
     ("07-scopeError.rs",      25,   Error (UnboundVar "y"));
@@ -24,7 +24,7 @@ let tests : (string * int * string trace_result) array =
     ("12-ownFnError.rs",      25,   Error (MovedValue "x"));
     ("13-borrow.rs",          25,   Ok "Ciao\nCiao\n");
     ("14-borrowFn.rs",        25,   Ok "il parametro prestato: Ciao\nil parametro x: Ciao\n" );
-    ("15-borrowError.rs",     25,   Error (DataRace {borrowed = "x"; is = `mut; want = `imm}));
+    ("15-borrowError.rs",     25,   Error (DataRace {borrowed = "x"; is = `imm; want = `mut}));
     ("16-borrowMut.rs",       25,   Ok "Ciao, mondo\nCiao, mondo\n");
     ("17-borrowMutError.rs",  40,   Error (MutBorrowOfNonMut "x"));
     ("18-loop.rs",            50,   Error (OutOfGas 50));
@@ -43,24 +43,33 @@ let tests : (string * int * string trace_result) array =
     ("31-assignNewString.rs", 100,  Ok "hello ciao\n");
     ("32-multipleArgs.rs",    100,  Ok "42\n57\n3\n2\n");
     ("33-borrowError.rs",     50,   Error (DataRace {borrowed = "x"; is = `mut; want = `imm}));
+    ("34-returnMoves.rs",     50,   Ok "prima di fie: ciao\ndentro fie: ciao\ndopo fie: ciao\n");
+    ("35-returnMoves.rs",     50,   Ok "prima di fie: ciao\ndentro fie: ciao\ndopo fie: ciao\n");
   |] [@@ocamlformat "disable"]
 
-let%test "" =
+let%test "tests_count__vs__examples_count" =
   let n_examples = Array.length examples_dict in
   let n_tests = Array.length tests in
   pr "%d = %d\n" n_examples n_tests;
   n_examples = n_tests
 
-let%expect_test "_" =
+let%expect_test "test_trace" =
+  let n_success, n_failures = (ref 0, ref 0) in
   Array.iter2
     (fun (name, prog) (_, gas, expected) ->
       let prog = Parser.parse_string prog in
       let actual = Trace.trace_prog gas prog in
       let good, icon =
         match (actual.result, expected) with
-        | Ok _, Ok o2 when actual.state.output = o2 -> (true, "✔")
-        | Error err1, Error err2 when err1 = err2 -> (true, "✔")
-        | _ -> (false, "✘")
+        | Ok _, Ok o2 when actual.state.output = o2 ->
+            incr n_success;
+            (true, "✔")
+        | Error err1, Error err2 when err1 = err2 ->
+            incr n_success;
+            (true, "✔")
+        | _ ->
+            incr n_failures;
+            (false, "✘")
       in
       let ok_str, error_str = ("Ok", "Error") in
       let res_kind, res_output =
@@ -87,6 +96,6 @@ let%expect_test "_" =
         (fun (title, kind, output) -> pr "%-9s %-9s\n%s\n\n" title kind output)
         [
           ("Output:", res_kind, res_output); ("Expected:", exp_kind, exp_output);
-        ]
-      (* pr "%s\n" (string_of_traceoutcome out) *))
-    examples_dict tests
+        ])
+    examples_dict tests;
+    pr "\n%d passed, %d failed\n" !n_success !n_failures

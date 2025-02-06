@@ -9,27 +9,6 @@ type 'a trace_result = ('a, trace_error) result
 type conf = LoopContinue | Break | Stop | Continue of statement
 [@@deriving variants]
 
-let expr_of_memval : memval -> expr trace_result =
-  let open Result in
-  function
-  | I32 i -> CONST i |> ok
-  | Bool true -> TRUE |> ok
-  | Bool false -> FALSE |> ok
-  | Unit -> UNIT |> ok
-  | Borrow data -> REF { mut = data.mut; e = CONST data.owner.loc } |> ok
-  | Str s -> STR s |> ok
-  | String data -> STRING data |> ok
-
-let memval_of_expr st : expr -> memval trace_result =
-  let open Types.Result in
-  function
-  | CONST n -> ok (I32 n)
-  | STRING data -> ok (String data)
-  | UNIT -> ok Unit
-  | BORROW loc -> ok (Borrow loc)
-  | STR value -> error (TypeError "String slice is not valid memval")
-  | _ -> error (TypeError "Not a value")
-
 let ( let& )
     ((step, wrapper, e) : (expr -> expr trace_result) * (expr -> 'term) * expr)
     (action : expr -> 'term trace_result) : 'term trace_result =
@@ -71,8 +50,7 @@ let rec trace1_expr st (e : expr) : expr trace_result =
           return (ARITH2 (op, e1', e2)))
   | ASSIGN (x, VAR y) -> error TODO
   | ASSIGN (x, e) ->
-      let& e' = (trace1_expr st, assign x, e) in
-      let* v = memval_of_expr st e' in
+      let& v = (trace1_expr st, assign x, e) in
       let* _ = State.set_var st x v in
       return UNIT
   | BLOCK (s, e) ->
@@ -149,9 +127,7 @@ and call_fun st (f : ide) (args : expr list) : expr trace_result =
       let* _ =
         try
           List.fold_left2
-            (fun _ par arg ->
-              let* v = memval_of_expr st arg in
-              State.new_var ~mut:false st par v)
+            (fun _ par arg -> State.new_var ~mut:false st par arg)
             (ok ()) pars args
         with _ -> error (MismatchedArgs f)
       in
@@ -173,7 +149,6 @@ and trace1_statement st (t : statement) : conf trace_result =
       let& v =
         (trace1_expr st, continue % let_stmt data.name data.mut, data.body)
       in
-      let* v = memval_of_expr st data.body in
       let* _ = State.new_var st data.name v ~mut:data.mut in
       return stop
   | FUNDECL data ->
@@ -207,7 +182,7 @@ let trace_prog (n_steps : int) (prog : statement list) : trace_outcome =
       match trace1_expr st expr with
       | Ok e' ->
           if is_value e' then (acc, ok e')
-          else go (i + 1) ({ expr; state = State.copy st } :: acc) e'
+          else go (i + 1) ({ expr = e'; state = State.copy st } :: acc) e'
       | err -> (acc, err)
     else (acc, error (OutOfGas n_steps))
   in

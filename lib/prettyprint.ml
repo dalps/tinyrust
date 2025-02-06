@@ -195,7 +195,7 @@ let string_of_trace_error = function
         | `imm -> "immutable"
       in
       spr "[DataRace] cannot borrow %s as %s because it is also borrowed as %s"
-        data.borrowed (format_mut data.is) (format_mut data.want)
+        data.borrowed (format_mut data.want) (format_mut data.is)
   | SegFault loc -> spr "[SegFault] illegal memory access at %d" loc
   | MismatchedArgs ide -> spr "[MismatchedArgs] %s" ide
   | NoRuleApplies -> "[NoRuleApplies] stuck term cannot take a step"

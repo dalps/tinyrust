@@ -25,6 +25,27 @@ type memval =
   | String of string owned
 [@@deriving show]
 
+let expr_of_memval : memval -> expr trace_result =
+  let open Result in
+  function
+  | I32 i -> CONST i |> ok
+  | Bool true -> TRUE |> ok
+  | Bool false -> FALSE |> ok
+  | Unit -> UNIT |> ok
+  | Borrow data -> REF { mut = data.mut; e = CONST data.owner.loc } |> ok
+  | Str s -> STR s |> ok
+  | String data -> STRING data |> ok
+
+let memval_of_expr st : expr -> memval trace_result =
+  let open Types.Result in
+  function
+  | CONST n -> ok (I32 n)
+  | STRING data -> ok (String data)
+  | UNIT -> ok Unit
+  | BORROW loc -> ok (Borrow loc)
+  | STR value -> error (TypeError "String slice is not valid memval")
+  | _ -> error (TypeError "Not a value")
+
 type envval = Loc of variable | Fn of fn_data | Prim of prim [@@deriving show]
 
 module Variable = struct
@@ -62,11 +83,16 @@ module Mem = struct
       M.update prev_owner
         (fun v ->
           match v with
-          | Some (String _) -> None
-          | v -> v)
+          | Some (String data) -> None
+          | v -> v) (* copy *)
         m
     in
-    ok (M.add new_owner v m1)
+    ok
+      (M.add new_owner
+         (match v with
+         | String data -> String { data with owner = new_owner }
+         | v -> v)
+         m1)
 end
 
 type env = Env.t
@@ -225,11 +251,12 @@ let new_var ~(mut : bool) st x init : unit trace_result =
   update_topenv st (fun env ->
       let* mem =
         match init with
-        | String data ->
-            let new_init = String { data with owner = var } in
-            if data.owner.id = "" then ok (Mem.add var new_init st.memory)
-            else Mem.move st.memory var data.owner
-        | _ -> ok (Mem.add var init st.memory)
+        | STR s ->
+            ok (Mem.add var (String { value = s; owner = var }) st.memory)
+        | STRING data -> Mem.move st.memory data.owner var
+        | v ->
+            let* v = memval_of_expr st v in
+            ok (Mem.add var v st.memory)
       in
       st.memory <- mem;
       ok (Env.add x (Loc var) env))
@@ -239,13 +266,18 @@ let new_var ~(mut : bool) st x init : unit trace_result =
    let y = x;  // move
    x = y       // move back
 *)
-let set_var st x (v : memval) : unit trace_result =
+let set_var st x (v : expr) : unit trace_result =
   let open Result in
   let env = topenv st in
   let* res = Env.find x env in
   match res with
   | Loc { mut = false } -> error (CannotMutate x)
   | Loc ({ borrows = `imm xs } as var) when BorrowSet.is_empty xs ->
+      let* v =
+        match v with
+        | STR s -> ok (String { value = s; owner = var })
+        | v -> memval_of_expr st v
+      in
       let* mem =
         match v with
         | String data -> Mem.move st.memory data.owner var
@@ -255,6 +287,21 @@ let set_var st x (v : memval) : unit trace_result =
       ok ()
   | Loc { loc; borrows = _ } -> error (CannotAssignBorrowed x)
   | _ -> error (TypeError (spr "cannot assign to the function %s" x))
+
+let set_mutborrow st (b : borrow) (v : expr) : unit trace_result =
+  let open Result in
+  let* mem =
+    if b.owner.mut then
+      let* v =
+        match v with
+        | STR s -> ok (String { value = s; owner = b.owner })
+        | v -> memval_of_expr st v
+      in
+      ok (Mem.add b.owner v st.memory)
+    else error (CannotMutate b.owner.id)
+  in
+  st.memory <- mem;
+  ok ()
 
 let new_fn st id pars body ret =
   update_topenv st (fun env ->

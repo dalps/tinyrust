@@ -43,6 +43,7 @@ let push_str st x str : unit trace_result =
   let open Types.Result in
   let* ref = borrow_mut st x ~by:"push_str" in
   let* v = deref st ref in
-  match v with
-  | String s1 -> State.set_var st x (String { s1 with value = s1.value ^ str })
-  | _ -> error (TypeError "push_str")
+  let* _ = match v with
+  | String s1 -> State.set_mutborrow st ref (STRING { s1 with value = s1.value ^ str })
+  | _ -> error (TypeError "push_str") in
+  unborrow st ref
