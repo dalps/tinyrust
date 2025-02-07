@@ -5,7 +5,7 @@ fn main () {
     loop {
       if j==2 { break; } 
       else { println!("{i},{j}"); j = j+1; }
-    };
+    }
     if i==2 { break; }
     else {i = i+1; }
   }

@@ -50,7 +50,12 @@
 %left "*" "/" "%"
 %nonassoc "&"
 
-%left SEP
+// Note: if WOSEP has priority over SEP, statement -> expr_with_block SEP will
+// never be reduced and SEP will always be part of the next statement
+%nonassoc TRUE FALSE CONST STRING LPAR LOOP LET LBRC IF ID FN CONTINUE BREAK
+%nonassoc WOSEP
+%nonassoc SEP
+%left SS
 
 %%
 
@@ -81,10 +86,15 @@ fun_parameter:
   | x = ID ":" fun_type { x }
 
 block_expr:
-  | "{" s = statement ";" e = option(expr) "}" { BLOCK (s, e) }
-  | "{" e = expr "}" { BLOCK (EMPTY, Some e) }
+  | "{" s = statement e = option(expr_without_block) "}" { BLOCK (s, e) }
+  | "{" e = expr_without_block "}" { BLOCK (EMPTY, Some e) }
 
-expr:
+expr_with_block:
+  | "if" e0 = expr e1 = block_expr "else" e2 = block_expr { IFE(e0, e1, e2) }
+  | "loop" e = block_expr { LOOP e }
+  | e = block_expr { e }
+
+expr_without_block:
   | "true" { TRUE }
   | "false" { FALSE }
   | "break" { BREAK }
@@ -96,17 +106,22 @@ expr:
   | x = ID "=" e = expr { ASSIGN (x,e) }
   | x = ID "." f = ID "(" args = separated_list(COMMA, expr) ")" { CALL(f, (VAR x) :: args) }
   | x = ID option("!") "(" args = separated_list(COMMA, expr) ")" { CALL (x,args) }
-  | b = block_expr { b }
   | "(" e = expr ")" { e }
-  | "if" e0 = expr e1 = block_expr "else" e2 = block_expr { IFE(e0, e1, e2) }
-  | "loop" e = block_expr { LOOP e }
   | "&" mut = boption("mut") e = expr { REF { mut; e } }
 
+expr:
+  | e = expr_with_block { e }
+  | e = expr_without_block { e }
+
 statement:
-  | "let" mut = boption("mut") name = ID "=" body = expr { LET{name; mut; body} }
-  | e = expr { EXPR e }
+  | ";" { EMPTY }
+  | "let" mut = boption("mut") name = ID "=" body = expr ";" { LET { name; mut; body } }
+  | e = expr_without_block ";" { EXPR e }
+  // | e = expr_with_block option(";") { EXPR e }
+  | e = expr_with_block ";" { EXPR e }
+  | e = expr_with_block { EXPR e } %prec WOSEP
   | i = item { i }
-  | s1 = statement ";" s2 = statement { SEQ (s1, s2) }
+  | s1 = statement s2 = statement { SEQ (s1, s2) } %prec SS
 
 %inline binop:
   | "+" { ADD }

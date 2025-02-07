@@ -45,6 +45,7 @@ let tests : (string * int * string trace_result) array =
     ("33-borrowError.rs",     50,   Error (DataRace {borrowed = "x"; is = `mut; want = `imm}));
     ("34-returnMoves.rs",     50,   Ok "prima di fie: ciao\ndentro fie: ciao\ndopo fie: ciao\n");
     ("35-returnMoves.rs",     50,   Ok "prima di fie: ciao\ndentro fie: ciao\ndopo fie: ciao\n");
+    ("36-dropError.rs",       50,   Error (MovedValue "x"));
   |] [@@ocamlformat "disable"]
 
 let%test "tests_count__vs__examples_count" =
