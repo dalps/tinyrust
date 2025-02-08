@@ -34,18 +34,20 @@ let tests : (string * int * string trace_result) array =
     ("22-funExpr.rs",         50,   Error (UnboundVar "interna"));
     ("23-scopeCheck.rs",      50,   Error (UnboundVar "y"));
     ("24-borrowOk.rs",        50,   Ok "hellociao\n");
-    ("25-borrowError.rs",     50,   Error (BorrowOfMovedValue "x"));
+    ("25-borrowError.rs",     50,   Error (MovedValue "x"));
     ("26-borrowError.rs",     50,   Error (DataRace {borrowed = "x"; is = `mut; want = `mut}));
     ("27-borrowError.rs",     50,   Error (DataRace {borrowed = "x"; is = `mut; want = `imm}));
     ("28-borrowError.rs",     100,  Error (CannotMoveOut "x"));
     ("29-toplevelFn.rs",      100,  Ok "3 x 8 = 24\n");
-    ("30-assignMoves.rs",     100,  Ok "Ciao\n");
-    ("31-assignNewString.rs", 100,  Ok "hello ciao\n");
+    ("30-assignMoves.rs",     100,  Ok "hello\n");
+    ("31-assignNewString.rs", 100,  Ok "ciao hello\n");
     ("32-multipleArgs.rs",    100,  Ok "42\n57\n3\n2\n");
     ("33-borrowError.rs",     50,   Error (DataRace {borrowed = "x"; is = `mut; want = `imm}));
     ("34-returnMoves.rs",     50,   Ok "prima di fie: ciao\ndentro fie: ciao\ndopo fie: ciao\n");
     ("35-returnMoves.rs",     50,   Ok "prima di fie: ciao\ndentro fie: ciao\ndopo fie: ciao\n");
     ("36-dropError.rs",       50,   Error (MovedValue "x"));
+    ("37-borrowError.rs",     100,  Error (MovedValue "x"));
+    ("38-ownership.rs",       50,   Ok "yours, hello\n");
   |] [@@ocamlformat "disable"]
 
 let%test "tests_count__vs__examples_count" =

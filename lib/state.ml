@@ -53,6 +53,18 @@ module Variable = struct
   let compare (t1 : variable) (t2 : variable) = compare t1.loc t2.loc
 end
 
+let is_borrowed_imm (x : variable) =
+  match x with
+  | { borrows = `imm xs } -> not (BorrowSet.is_empty xs)
+  | _ -> false
+
+let is_borrowed_mut (x : variable) =
+  match x with
+  | { borrows = `mut _ } -> true
+  | _ -> false
+
+let is_borrowed x = is_borrowed_imm x || is_borrowed_mut x
+
 module Env = struct
   module M = Map.Make (String)
   include M
@@ -79,11 +91,15 @@ module Mem = struct
   let move m (prev_owner : variable) (new_owner : variable) : t trace_result =
     let open Result in
     let* v = find m prev_owner in
+    let* _ =
+      if is_borrowed prev_owner then error (CannotMoveOut prev_owner.id)
+      else ok ()
+    in
     let m1 =
       M.update prev_owner
         (fun v ->
           match v with
-          | Some (String data) -> None
+          | Some (String _) -> None
           | v -> v) (* copy *)
         m
     in
@@ -180,13 +196,14 @@ let borrow_mut st ?(by = "anon") src : borrow trace_result =
   let* v = Env.find src env in
   match v with
   | Loc data when not data.mut -> error (MutBorrowOfNonMut src)
-  | Loc ({ borrows = `imm xs } as owner) when BorrowSet.is_empty xs ->
-      let owner = { owner with borrows = `mut by; mut = true } in
+  | Loc var when is_borrowed_imm var ->
+      error (DataRace { borrowed = src; is = `imm; want = `mut })
+  | Loc var when is_borrowed_mut var ->
+      error (DataRace { borrowed = src; is = `mut; want = `mut })
+  | Loc var ->
+      let owner = { var with borrows = `mut by; mut = true } in
       let* _ = update_topenv st (fun env -> ok (Env.add src (Loc owner) env)) in
       ok { by; owner; mut = true }
-  | Loc { borrows = `imm _ } ->
-      error (DataRace { borrowed = src; is = `imm; want = `mut })
-  | Loc _ -> error (DataRace { borrowed = src; is = `mut; want = `mut })
   | _ -> error (TypeError "Non-value cannot be referenced")
 
 let unborrow st (borrow : borrow) : unit trace_result =
@@ -194,26 +211,19 @@ let unborrow st (borrow : borrow) : unit trace_result =
   update_topenv st (fun env ->
       Env.update borrow.owner.id
         (function
-          | Some (Loc owner) ->
-              let owner =
-                if borrow.mut then { owner with borrows = `imm BorrowSet.empty }
-                else
-                  {
-                    owner with
-                    borrows =
-                      (match owner.borrows with
-                      | `imm s when BorrowSet.is_empty s ->
-                          failwith "no immutable borrows to remove"
-                      | `mut _ ->
-                          failwith
-                            "cannot remove mutable borrow from immutably \
-                             borrowed variable"
-                      | `imm s -> `imm (BorrowSet.remove borrow.by s));
-                  }
-              in
-              Some (Loc owner)
-          | Some v -> Some v
-          | None -> None)
+          | Some (Loc owner) when is_borrowed owner ->
+              Some
+                (Loc
+                   {
+                     owner with
+                     borrows =
+                       (match owner.borrows with
+                       | `imm s when BorrowSet.is_empty s ->
+                           failwith "no immutable borrows to remove"
+                       | `mut _ -> `imm BorrowSet.empty
+                       | `imm s -> `imm (BorrowSet.remove borrow.by s));
+                   })
+          | o -> o)
         env
       |> ok)
 
@@ -272,20 +282,20 @@ let set_var st x (v : expr) : unit trace_result =
   let* res = Env.find x env in
   match res with
   | Loc { mut = false } -> error (CannotMutate x)
-  | Loc ({ borrows = `imm xs } as var) when BorrowSet.is_empty xs ->
-      let* v =
-        match v with
-        | STR s -> ok (String { value = s; owner = var })
-        | v -> memval_of_expr st v
-      in
+  | Loc var when is_borrowed var -> error (CannotAssignBorrowed x)
+  | Loc var ->
       let* mem =
         match v with
-        | String data -> Mem.move st.memory data.owner var
-        | v -> ok (Mem.add var v st.memory)
+        | STR s ->
+            ok (Mem.add var (String { value = s; owner = var }) st.memory)
+            (* drop the previous value *)
+        | STRING data -> Mem.move st.memory data.owner var
+        | v ->
+            let* v = memval_of_expr st v in
+            ok (Mem.add var v st.memory)
       in
       st.memory <- mem;
       ok ()
-  | Loc { loc; borrows = _ } -> error (CannotAssignBorrowed x)
   | _ -> error (TypeError (spr "cannot assign to the function %s" x))
 
 let set_mutborrow st (b : borrow) (v : expr) : unit trace_result =

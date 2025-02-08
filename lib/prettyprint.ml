@@ -38,6 +38,11 @@ let rec string_of_expr indent (expr : Ast.expr) : string =
   | ASSIGN (x, e) -> spr "%s = %s" (string_of_var x) (string_of_expr indent e)
   | BLOCK (s, None) ->
       spr "{\n%s\n%s}" (string_of_statement (indent + 1) s) (tabs indent)
+  | BLOCK (EMPTY, Some e) ->
+      spr "{\n%s%s\n%s}"
+        (tabs (indent + 1))
+        (string_of_expr (indent + 1) e)
+        (tabs indent)
   | BLOCK (s, Some e) ->
       spr "{\n%s\n%s%s\n%s}"
         (string_of_statement (indent + 1) s)

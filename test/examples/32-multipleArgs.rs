@@ -13,7 +13,7 @@ fn main() {
       let x = y;
       let z = x + y + foo(y, x, 42);
       println!("{z}");
-    };
+    }
     println!("{y}");
   };
   println!("{x}");

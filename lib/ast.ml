@@ -10,7 +10,7 @@ type variable = {
 }
 [@@deriving show]
 type 'v owned = { value : 'v; owner : variable } [@@deriving show]
-type borrow = { by: ide; mut : bool; owner : variable } [@@deriving show]
+type borrow = { by : ide; mut : bool; owner : variable } [@@deriving show]
 
 type binop = ADD | MUL | SUB | MOD | DIV | EQ | LEQ [@@deriving show]
 
@@ -61,7 +61,7 @@ let expr e = EXPR e
 let let_stmt name mut body = LET { name; mut; body }
 
 let apply_binop op n1 n2 : expr =
-  match (op : binop) with
+  match op with
   | ADD -> CONST (n1 + n2)
   | MUL -> CONST (n1 * n2)
   | SUB -> CONST (n1 - n2)
@@ -70,9 +70,18 @@ let apply_binop op n1 n2 : expr =
   | EQ -> if Int.equal n1 n2 then TRUE else FALSE
   | LEQ -> if Int.compare n1 n2 <= 0 then TRUE else FALSE
 
+let apply_stringop op n1 n2 : expr =
+  match op with
+  | EQ -> if String.equal n1 n2 then TRUE else FALSE
+  | _ -> failwith "not supported"
+
 let arith2 op e1 e2 =
   match (e1, e2) with
   | CONST n1, CONST n2 -> apply_binop op n1 n2
+  | STRING n1, STRING n2 -> apply_stringop op n1.value n2.value
+  | STRING n1, STR n2 -> apply_stringop op n1.value n2
+  | STR n1, STRING n2 -> apply_stringop op n1 n2.value
+  | STR n1, STR n2 -> apply_stringop op n1 n2
   | _ -> ARITH2 (op, e1, e2)
 
 let is_value = function

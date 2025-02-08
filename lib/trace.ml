@@ -39,16 +39,10 @@ let rec trace1_expr st (e : expr) : expr trace_result =
       let* v = expr_of_memval res in
       return v
       (* else error (TypeError "need to copy") *)
-  | ARITH2 (op, e1, e2) -> (
-      match (e1, e2) with
-      | CONST n1, CONST n2 -> return (apply_binop op n1 n2)
-      | CONST _, e2 ->
-          let* e2' = trace1_expr st e2 in
-          return (ARITH2 (op, e1, e2'))
-      | e1, _ ->
-          let* e1' = trace1_expr st e1 in
-          return (ARITH2 (op, e1', e2)))
-  | ASSIGN (x, VAR y) -> error TODO
+  | ARITH2 (op, e1, e2) ->
+      let& v1 = (trace1_expr st, (fun e1' -> arith2 op e1' e2), e1) in
+      let& v2 = (trace1_expr st, arith2 op v1, e2) in
+      return (arith2 op v1 v2)
   | ASSIGN (x, e) ->
       let& v = (trace1_expr st, assign x, e) in
       let* _ = State.set_var st x v in
@@ -68,7 +62,6 @@ let rec trace1_expr st (e : expr) : expr trace_result =
               return UNIT
           | Some e -> return (BLOCK_RET e))
       | Continue s' -> return (BLOCK_EXEC (s', e)))
-  | BLOCK_RET (VAR x) -> error TODO
   | BLOCK_RET e ->
       let& v = (trace1_expr st, block_ret, e) in
       State.dropenv st;
@@ -114,7 +107,7 @@ and trace1_args st (f : ide) (vals : expr list) (args : expr list) :
   match args with
   | [] -> call_fun st f (List.rev vals)
   | v :: args when is_value v -> trace1_args st f (v :: vals) args
-  | (VAR _ as v) :: args -> trace1_args st f (v :: vals) args
+  (* | (VAR _ as v) :: args -> trace1_args st f (v :: vals) args *)
   | arg :: args ->
       let* arg' = trace1_expr st arg in
       return (CALL (f, vals @ (arg' :: args)))
@@ -135,8 +128,8 @@ and call_fun st (f : ide) (args : expr list) : expr trace_result =
   | Ok (`Prim PRINTLN), [ STR s ] ->
       let* _ = Prim.println st s in
       ok UNIT
-  | Ok (`Prim PUSH_STR), [ VAR x; STR s2 ] ->
-      let* s = Prim.push_str st x s2 in
+  | Ok (`Prim PUSH_STR), [ STRING data; STR s2 ] ->
+      let* s = Prim.push_str st data.owner.id s2 in
       ok UNIT
   | Ok (`Prim _), _ -> error (MismatchedArgs f)
   | Error err, _ -> error err
